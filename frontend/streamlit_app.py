@@ -15,19 +15,34 @@ API_BASE = os.environ.get("RAG_API_BASE", "http://localhost:8000")
 st.set_page_config(page_title="RAG Chatbot Nội bộ", page_icon="🤖", layout="wide")
 
 # ---------- Sidebar: cấu hình model (tương ứng Tab 3 trong thiết kế) ----------
+PROVIDER_LABELS = {
+    "anthropic": "Anthropic Claude",
+    "openai": "OpenAI",
+    "xai": "xAI Grok",
+    "gemini": "Google Gemini",
+}
+PROVIDER_ENV_VAR = {
+    "anthropic": "ANTHROPIC_API_KEY",
+    "openai": "OPENAI_API_KEY",
+    "xai": "XAI_API_KEY",
+    "gemini": "GOOGLE_API_KEY",
+}
+
 with st.sidebar:
     st.header("⚙️ Cấu hình Model")
     provider = st.selectbox(
         "Provider",
-        ["anthropic", "openai"],
-        format_func=lambda p: "Anthropic Claude" if p == "anthropic" else "OpenAI",
+        list(PROVIDER_LABELS.keys()),
+        format_func=lambda p: PROVIDER_LABELS[p],
     )
     api_key = st.text_input(
-        f"{'ANTHROPIC' if provider == 'anthropic' else 'OPENAI'}_API_KEY",
+        PROVIDER_ENV_VAR[provider],
         type="password",
         help="Để trống nếu server đã cấu hình sẵn key qua biến môi trường (.env).",
     )
-    model_override = st.text_input("Model (tuỳ chọn)", placeholder="vd: claude-sonnet-5 / gpt-4o-mini")
+    model_override = st.text_input(
+        "Model (tuỳ chọn)", placeholder="vd: claude-sonnet-5 / gpt-4o-mini / grok-4 / gemini-2.5-flash"
+    )
     top_k = st.slider("Top-K tài liệu truy hồi", min_value=1, max_value=10, value=5)
     category = st.selectbox("Phạm vi tài liệu", ["ALL", "GENERAL", "LEGAL_PDF", "CONTRACT", "TECH_SPEC"])
     st.divider()

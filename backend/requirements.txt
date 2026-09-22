@@ -13,5 +13,6 @@ tiktoken>=0.7
 
 anthropic>=0.34
 openai>=1.40
+google-genai>=0.3
 
 python-dotenv>=1.0

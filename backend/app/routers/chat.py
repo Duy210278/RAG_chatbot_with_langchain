@@ -13,9 +13,13 @@ router = APIRouter(prefix="/api/v1/chat", tags=["chat"])
 @router.post("/completions")
 async def chat_completions(payload: schemas.ChatRequest, db: Session = Depends(get_db)):
     settings = get_settings()
-    api_key = payload.api_key or (
-        settings.anthropic_api_key if payload.provider == "anthropic" else settings.openai_api_key
-    )
+    default_keys = {
+        "anthropic": settings.anthropic_api_key,
+        "openai": settings.openai_api_key,
+        "xai": settings.xai_api_key,
+        "gemini": settings.google_api_key,
+    }
+    api_key = payload.api_key or default_keys.get(payload.provider)
     if not api_key:
         raise HTTPException(
             400,

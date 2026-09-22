@@ -1,4 +1,5 @@
-"""Lớp trừu tượng hoá LLM: hỗ trợ Anthropic Claude và OpenAI, người dùng chọn ở UI (Tab Cấu hình)."""
+"""Lớp trừu tượng hoá LLM: hỗ trợ Anthropic Claude, OpenAI, xAI Grok, Google Gemini.
+Người dùng chọn provider ở UI (Tab Cấu hình)."""
 
 from collections.abc import AsyncIterator
 
@@ -35,10 +36,14 @@ async def _stream_anthropic(api_key: str, model: str, system: str, user: str) ->
             yield text
 
 
-async def _stream_openai(api_key: str, model: str, system: str, user: str) -> AsyncIterator[str]:
+async def _stream_openai_compatible(
+    api_key: str, model: str, system: str, user: str, base_url: str | None = None
+) -> AsyncIterator[str]:
+    """Dùng chung cho OpenAI và mọi provider tương thích chuẩn OpenAI Chat Completions
+    (xAI Grok, Groq, DeepSeek, Mistral, Ollama/vLLM local...) - chỉ khác nhau ở base_url."""
     from openai import AsyncOpenAI
 
-    client = AsyncOpenAI(api_key=api_key)
+    client = AsyncOpenAI(api_key=api_key, base_url=base_url)
     stream = await client.chat.completions.create(
         model=model,
         messages=[
@@ -51,6 +56,21 @@ async def _stream_openai(api_key: str, model: str, system: str, user: str) -> As
         delta = chunk.choices[0].delta.content
         if delta:
             yield delta
+
+
+async def _stream_gemini(api_key: str, model: str, system: str, user: str) -> AsyncIterator[str]:
+    from google import genai
+    from google.genai import types
+
+    client = genai.Client(api_key=api_key)
+    stream = await client.aio.models.generate_content_stream(
+        model=model,
+        contents=user,
+        config=types.GenerateContentConfig(system_instruction=system),
+    )
+    async for chunk in stream:
+        if chunk.text:
+            yield chunk.text
 
 
 async def generate_answer_stream(
@@ -69,7 +89,17 @@ async def generate_answer_stream(
             yield token
     elif provider == "openai":
         model = model or settings.openai_model
-        async for token in _stream_openai(api_key, model, SYSTEM_PROMPT, user_prompt):
+        async for token in _stream_openai_compatible(api_key, model, SYSTEM_PROMPT, user_prompt):
+            yield token
+    elif provider == "xai":
+        model = model or settings.xai_model
+        async for token in _stream_openai_compatible(
+            api_key, model, SYSTEM_PROMPT, user_prompt, base_url="https://api.x.ai/v1"
+        ):
+            yield token
+    elif provider == "gemini":
+        model = model or settings.gemini_model
+        async for token in _stream_gemini(api_key, model, SYSTEM_PROMPT, user_prompt):
             yield token
     else:
         raise ValueError(f"Provider không hợp lệ: {provider}")
