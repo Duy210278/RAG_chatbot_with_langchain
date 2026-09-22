@@ -1,0 +1,7 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python3 -m py_compile backend/app/*.py backend/app/routers/*.py frontend/streamlit_app.py)"
+    ]
+  }
+}
