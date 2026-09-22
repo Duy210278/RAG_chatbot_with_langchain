@@ -11,7 +11,7 @@ Chunking → Embedding (local) → Vector Search (Qdrant) → RAG Generation (Cl
 | Vector DB | Qdrant/Milvus server, hybrid search | **Qdrant local mode** (file-based, không cần Docker) |
 | Metadata DB | PostgreSQL (RBAC, audit logs đầy đủ) | **SQLite** (documents + chunks, chưa RBAC/audit) |
 | Embedding | Chưa chỉ định | **Local, miễn phí**: `intfloat/multilingual-e5-small` (đa ngôn ngữ, hỗ trợ tiếng Việt) |
-| LLM | OpenAI/Anthropic/Gemini/Ollama | **Anthropic Claude, OpenAI, xAI Grok, Google Gemini**, chọn ở UI |
+| LLM | OpenAI/Anthropic/Gemini/Ollama | **Anthropic Claude, OpenAI, xAI Grok, Google Gemini, Groq**, chọn ở UI |
 | Auth/RBAC | JWT, phân quyền role/department | Chưa có (single-user MVP) |
 | Streaming | SSE | Có, qua `StreamingResponse` |
 
@@ -32,8 +32,17 @@ pip install -r frontend/requirements.txt
 
 # 3. Cấu hình API key (tuỳ chọn — có thể bỏ qua và nhập key trực tiếp trên UI)
 cp .env.example .env
-# rồi mở .env, điền ANTHROPIC_API_KEY hoặc OPENAI_API_KEY
+# rồi mở .env, điền API key của provider bạn muốn dùng
 ```
+
+### Lấy API key miễn phí (để test nhanh, không tốn phí)
+
+| Provider | Lấy key ở đâu | Ghi chú |
+|---|---|---|
+| **Google Gemini** | [aistudio.google.com/apikey](https://aistudio.google.com/apikey) | Free tier thật, chất lượng tốt (Gemini 2.5 Flash) |
+| **Groq** | [console.groq.com/keys](https://console.groq.com/keys) | Free tier, chạy Llama 3.3 70B rất nhanh |
+
+Anthropic Claude / OpenAI / xAI Grok không có free tier lâu dài (chỉ credit dùng thử ban đầu cho tài khoản mới).
 
 ## Chạy
 
@@ -76,7 +85,7 @@ curl -N -X POST http://localhost:8000/api/v1/chat/completions \
 4. **Reranking**: thêm bước rerank (cross-encoder) sau khi lấy top-k từ vector search.
 5. **Hybrid search**: kết hợp BM25/sparse vectors với dense vector search hiện tại.
 6. **Docker Compose**: đóng gói Postgres + Qdrant server + backend + frontend khi cần triển khai thật.
-7. **Thêm LLM provider khác** (Groq, DeepSeek, Mistral, Ollama/vLLM local...): hầu hết tương thích chuẩn
+7. **Thêm LLM provider khác** (DeepSeek, Mistral, OpenRouter, Ollama/vLLM local...): hầu hết tương thích chuẩn
    OpenAI Chat Completions, chỉ cần gọi `_stream_openai_compatible(api_key, model, system, user, base_url=...)`
    có sẵn trong `backend/app/llm.py` với `base_url` riêng của provider đó — không cần viết hàm mới
    (xem cách đã làm với xAI Grok).

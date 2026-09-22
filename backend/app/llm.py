@@ -97,6 +97,12 @@ async def generate_answer_stream(
             api_key, model, SYSTEM_PROMPT, user_prompt, base_url="https://api.x.ai/v1"
         ):
             yield token
+    elif provider == "groq":
+        model = model or settings.groq_model
+        async for token in _stream_openai_compatible(
+            api_key, model, SYSTEM_PROMPT, user_prompt, base_url="https://api.groq.com/openai/v1"
+        ):
+            yield token
     elif provider == "gemini":
         model = model or settings.gemini_model
         async for token in _stream_gemini(api_key, model, SYSTEM_PROMPT, user_prompt):

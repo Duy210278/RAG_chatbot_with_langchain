@@ -20,7 +20,7 @@ class UploadResponse(BaseModel):
 
 class ChatRequest(BaseModel):
     message: str
-    provider: str = Field(default="anthropic", pattern="^(anthropic|openai|xai|gemini)$")
+    provider: str = Field(default="anthropic", pattern="^(anthropic|openai|xai|gemini|groq)$")
     api_key: str | None = None
     model: str | None = None
     top_k: int = 5

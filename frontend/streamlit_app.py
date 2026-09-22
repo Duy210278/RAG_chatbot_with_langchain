@@ -19,13 +19,15 @@ PROVIDER_LABELS = {
     "anthropic": "Anthropic Claude",
     "openai": "OpenAI",
     "xai": "xAI Grok",
-    "gemini": "Google Gemini",
+    "gemini": "Google Gemini (free tier)",
+    "groq": "Groq (free tier)",
 }
 PROVIDER_ENV_VAR = {
     "anthropic": "ANTHROPIC_API_KEY",
     "openai": "OPENAI_API_KEY",
     "xai": "XAI_API_KEY",
     "gemini": "GOOGLE_API_KEY",
+    "groq": "GROQ_API_KEY",
 }
 
 with st.sidebar:

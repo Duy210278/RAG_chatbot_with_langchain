@@ -18,6 +18,7 @@ async def chat_completions(payload: schemas.ChatRequest, db: Session = Depends(g
         "openai": settings.openai_api_key,
         "xai": settings.xai_api_key,
         "gemini": settings.google_api_key,
+        "groq": settings.groq_api_key,
     }
     api_key = payload.api_key or default_keys.get(payload.provider)
     if not api_key:

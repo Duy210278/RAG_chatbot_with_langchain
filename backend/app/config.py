@@ -19,12 +19,14 @@ class Settings(BaseSettings):
     openai_api_key: str | None = None
     xai_api_key: str | None = None
     google_api_key: str | None = None
+    groq_api_key: str | None = None
 
     default_provider: str = "anthropic"
     anthropic_model: str = "claude-sonnet-5"
     openai_model: str = "gpt-4o-mini"
     xai_model: str = "grok-4"
     gemini_model: str = "gemini-2.5-flash"
+    groq_model: str = "llama-3.3-70b-versatile"
 
     # --- Embedding (chạy local, miễn phí, đa ngôn ngữ - hỗ trợ tốt tiếng Việt) ---
     embedding_model: str = "intfloat/multilingual-e5-small"
