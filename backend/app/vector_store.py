@@ -31,17 +31,20 @@ class VectorStore:
         self.client.upsert(collection_name=self.collection, points=points)
 
     def search(self, query_vector: list[float], top_k: int, category: str | None = None):
+        """Trả về danh sách điểm (mỗi điểm có .score, .payload) - dùng query_points
+        vì .search() đã bị loại bỏ khỏi qdrant-client >= 1.11."""
         query_filter = None
         if category and category != "ALL":
             query_filter = qmodels.Filter(
                 must=[qmodels.FieldCondition(key="category", match=qmodels.MatchValue(value=category))]
             )
-        return self.client.search(
+        response = self.client.query_points(
             collection_name=self.collection,
-            query_vector=query_vector,
+            query=query_vector,
             query_filter=query_filter,
             limit=top_k,
         )
+        return response.points
 
     def delete_document(self, document_id: str) -> None:
         self.client.delete(
