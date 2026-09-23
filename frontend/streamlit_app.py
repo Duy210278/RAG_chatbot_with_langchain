@@ -30,7 +30,11 @@ def fetch_providers() -> list[dict]:
 
 # ---------- Sidebar: chọn Provider/Model đã cấu hình sẵn trong .env + Top-K ----------
 with st.sidebar:
-    st.header("⚙️ Cấu hình Model")
+    header_col, refresh_col = st.columns([4, 1])
+    header_col.header("⚙️ Cấu hình Model")
+    if refresh_col.button("🔄", help="Tải lại danh sách Provider/Model từ backend (sau khi sửa .env + restart backend)"):
+        fetch_providers.clear()
+
     try:
         providers = fetch_providers()
     except requests.exceptions.RequestException as exc:
