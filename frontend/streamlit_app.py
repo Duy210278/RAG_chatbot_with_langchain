@@ -108,9 +108,14 @@ with tab_chat:
                 st.markdown(question)
 
             with st.chat_message("assistant"):
+                # Khung trạng thái kiểu ChatGPT/Claude: hiện "Đang tìm tài liệu..." -> "Đã tìm
+                # thấy N đoạn, đang soạn..." trước khi có token đầu tiên, để không bị màn hình
+                # trắng trong lúc chờ. Tự thu gọn khi có câu trả lời (state="complete").
+                status_box = st.status("Đang xử lý câu hỏi...", state="running")
                 placeholder = st.empty()
                 full_text = ""
                 citations = []
+                first_token = True
                 try:
                     resp = requests.post(
                         f"{API_BASE}/api/v1/chat/completions",
@@ -134,12 +139,18 @@ with tab_chat:
                             event_name = line.split(":", 1)[1].strip()
                         elif line.startswith("data:"):
                             data = json.loads(line.split(":", 1)[1].strip())
-                            if event_name == "token":
+                            if event_name == "status":
+                                status_box.update(label=data["message"], state="running")
+                            elif event_name == "token":
+                                if first_token:
+                                    status_box.update(label="✅ Đã có câu trả lời", state="complete")
+                                    first_token = False
                                 full_text += data["text"]
                                 placeholder.markdown(full_text + "▌")
                             elif event_name == "citations":
                                 citations = data["citations"]
                             elif event_name == "error":
+                                status_box.update(label="❌ Có lỗi xảy ra", state="error")
                                 full_text = f"❌ Lỗi từ LLM provider: {data['message']}"
                     placeholder.markdown(full_text)
                     if citations:
@@ -150,6 +161,7 @@ with tab_chat:
                                 )
                                 st.caption(c["snippet"])
                 except requests.exceptions.RequestException as exc:
+                    status_box.update(label="❌ Mất kết nối backend", state="error")
                     full_text = f"❌ Lỗi kết nối tới backend: {exc}"
                     placeholder.markdown(full_text)
 

@@ -22,7 +22,13 @@ async def answer_question_stream(
     category: str | None,
     history: list[dict] | None = None,
 ) -> AsyncIterator[str]:
-    """Retrieval -> Context Assembly -> Generation, phát theo Server-Sent Events (mục 6.2)."""
+    """Retrieval -> Context Assembly -> Generation, phát theo Server-Sent Events (mục 6.2).
+
+    Phát thêm event "status" ở các mốc quan trọng (đang tìm tài liệu / đã tìm thấy, đang soạn
+    câu trả lời) để UI hiển thị tiến trình cho người dùng trong lúc chờ, thay vì màn hình trắng."""
+    # yield ngay để client thấy trạng thái NGAY LẬP TỨC, trước khi chạy embed/search (có thể mất 1-2s)
+    yield _sse("status", {"stage": "retrieving", "message": "🔍 Đang tìm kiếm tài liệu liên quan..."})
+
     embedder = get_embedder()
     store = get_vector_store()
 
@@ -30,6 +36,7 @@ async def answer_question_stream(
     hits = store.search(query_vector, top_k=top_k, category=category)
 
     if not hits:
+        yield _sse("status", {"stage": "done", "message": "Không tìm thấy tài liệu liên quan"})
         yield _sse("token", {"text": "Không tìm thấy tài liệu liên quan trong hệ thống để trả lời câu hỏi này."})
         yield _sse("citations", {"citations": []})
         yield _sse("done", {})
@@ -46,6 +53,14 @@ async def answer_question_stream(
         }
         for hit in hits
     ]
+
+    yield _sse(
+        "status",
+        {
+            "stage": "generating",
+            "message": f"📄 Đã tìm thấy {len(hits)} đoạn liên quan - đang soạn câu trả lời...",
+        },
+    )
 
     try:
         async for token in generate_answer_stream(
