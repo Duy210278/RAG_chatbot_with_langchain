@@ -33,10 +33,10 @@ class Settings(BaseSettings):
 
     # Danh sách model cho từng provider, phân cách bằng dấu phẩy - model đầu tiên là mặc định.
     # UI hiển thị đúng danh sách này dưới dạng dropdown (không cho gõ tay để tránh sai định dạng model ID).
-    anthropic_models: str = "claude-sonnet-5,claude-opus-5,claude-haiku-4-5-20251001"
-    openai_models: str = "gpt-4o-mini,gpt-4o"
+    anthropic_models: str = "claude-sonnet-5,claude-opus-5,claude-haiku-4-5-20251001,claude-fable-5-1"
+    openai_models: str = "gpt-4o-mini,gpt-4o,gpt-4.1,gpt-4.1-mini,gpt-4.1-nano,o3-mini,o1"
     xai_models: str = "grok-4,grok-4-fast"
-    gemini_models: str = "gemini-2.5-flash,gemini-2.5-pro"
+    gemini_models: str = "gemini-2.5-flash,gemini-2.5-pro,gemini-2.5-flash-lite,gemini-2.0-flash"
     groq_models: str = "llama-3.3-70b-versatile,llama-3.1-8b-instant"
 
     # --- Lịch sử hội thoại làm ngữ cảnh multi-turn ---
