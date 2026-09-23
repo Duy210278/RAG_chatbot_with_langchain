@@ -10,14 +10,14 @@ from .. import models, schemas
 from ..config import UPLOAD_DIR
 from ..db import get_db
 from ..embeddings import get_embedder
-from ..ingestion import chunk_pdf
+from ..ingestion import CHUNKERS, chunk_document
 from ..vector_store import get_vector_store
 
 router = APIRouter(prefix="/api/v1/documents", tags=["documents"])
 
-# MVP: chỉ hỗ trợ PDF trước. Các định dạng khác trong Ma trận Ingestion (mục 2)
-# sẽ được thêm dần (mỗi định dạng chỉ cần thêm 1 hàm extract + đăng ký vào đây).
-ALLOWED_EXTENSIONS = {".pdf"}
+# Các định dạng khác trong Ma trận Ingestion (mục 2) sẽ được thêm dần - mỗi định dạng
+# chỉ cần thêm 1 hàm chunk_xxx() và đăng ký vào CHUNKERS trong ingestion.py.
+ALLOWED_EXTENSIONS = set(CHUNKERS.keys())
 
 
 @router.post("/upload", response_model=schemas.UploadResponse)
@@ -29,7 +29,8 @@ async def upload_document(
 ):
     ext = Path(file.filename).suffix.lower()
     if ext not in ALLOWED_EXTENSIONS:
-        raise HTTPException(400, f"Định dạng {ext} chưa được hỗ trợ trong MVP này (hiện chỉ hỗ trợ PDF).")
+        supported = ", ".join(sorted(ALLOWED_EXTENSIONS))
+        raise HTTPException(400, f"Định dạng {ext} chưa được hỗ trợ. Hiện chỉ hỗ trợ: {supported}.")
 
     doc_id = str(uuid.uuid4())
     saved_path = UPLOAD_DIR / f"{doc_id}{ext}"
@@ -50,9 +51,9 @@ async def upload_document(
     db.commit()
 
     try:
-        chunks = chunk_pdf(str(saved_path))
+        chunks = chunk_document(str(saved_path), ext)
         if not chunks:
-            raise ValueError("Không trích xuất được nội dung văn bản nào từ file (có thể là PDF scan ảnh).")
+            raise ValueError("Không trích xuất được nội dung văn bản nào từ file.")
 
         embedder = get_embedder()
         vectors = embedder.embed_passages([c["content"] for c in chunks])

@@ -1,13 +1,13 @@
 # RAG Chatbot v2 — MVP
 
-MVP triển khai từ [tai_lieu_thiet_ke_chatbot_v2.md](tai_lieu_thiet_ke_chatbot_v2.md): pipeline Ingestion (PDF) →
-Chunking → Embedding (local) → Vector Search (Qdrant) → RAG Generation (Claude/OpenAI) → Streamlit UI.
+MVP triển khai từ [tai_lieu_thiet_ke_chatbot_v2.md](tai_lieu_thiet_ke_chatbot_v2.md): pipeline Ingestion (PDF/DOCX/Markdown/TXT) →
+Chunking → Embedding (local) → Vector Search (Qdrant) → RAG Generation (Claude/OpenAI/Grok/Gemini/Groq) → Streamlit UI.
 
 ## Kiến trúc MVP so với thiết kế đầy đủ
 
 | Thành phần | Thiết kế đầy đủ | MVP hiện tại |
 | :--- | :--- | :--- |
-| Loại tài liệu | 11 loại (PDF, OCR, Excel, Code, Email...) | Chỉ **PDF** (kiến trúc dễ mở rộng thêm) |
+| Loại tài liệu | 11 loại (PDF, OCR, Excel, Code, Email...) | **PDF (kể cả scan/OCR), DOCX, Markdown, TXT** (kiến trúc dễ mở rộng thêm) |
 | Vector DB | Qdrant/Milvus server, hybrid search | **Qdrant local mode** (file-based, không cần Docker) |
 | Metadata DB | PostgreSQL (RBAC, audit logs đầy đủ) | **SQLite** (documents + chunks, chưa RBAC/audit) |
 | Embedding | Chưa chỉ định | **Local, miễn phí**: `intfloat/multilingual-e5-small` (đa ngôn ngữ, hỗ trợ tiếng Việt) |
@@ -34,6 +34,18 @@ pip install -r frontend/requirements.txt
 cp .env.example .env
 # rồi mở .env, điền API key của provider bạn muốn dùng
 ```
+
+### Cài Tesseract (bắt buộc để nạp PDF scan/ảnh — bỏ qua nếu chỉ dùng PDF có text layer)
+
+```bash
+# macOS
+brew install tesseract
+# Tải thêm gói ngôn ngữ tiếng Việt (bản "fast", nhẹ hơn bản đầy đủ)
+curl -L -o "$(brew --prefix tesseract)/share/tessdata/vie.traineddata" \
+  https://github.com/tesseract-ocr/tessdata_fast/raw/main/vie.traineddata
+```
+
+Nếu không cài Tesseract, upload PDF text bình thường vẫn hoạt động — chỉ PDF scan/ảnh (không có text layer) mới báo lỗi.
 
 ### Lấy API key miễn phí (để test nhanh, không tốn phí)
 
@@ -77,8 +89,9 @@ curl -N -X POST http://localhost:8000/api/v1/chat/completions \
 
 ## Hướng mở rộng tiếp theo (theo tài liệu thiết kế)
 
-1. **Thêm loại tài liệu**: viết thêm hàm `chunk_xxx()` trong `backend/app/ingestion.py` cho từng loại
-   (DOCX, Excel/CSV, Markdown, Email, Source Code...) theo mục 2-3 của tài liệu thiết kế.
+1. **Thêm loại tài liệu**: viết thêm hàm `chunk_xxx()` trong `backend/app/ingestion.py` rồi đăng ký vào
+   dict `CHUNKERS` (đã có sẵn PDF/DOCX/Markdown/TXT theo cách này) cho các loại còn lại
+   (Excel/CSV, Email, Source Code, DB...) theo mục 2-3 của tài liệu thiết kế.
 2. **Migrate sang PostgreSQL**: dùng đúng DDL ở mục 4 của tài liệu thiết kế, thêm Auth (JWT) + RBAC.
 3. **Migrate Qdrant local → Qdrant server**: chỉ cần đổi `QdrantClient(path=...)` thành
    `QdrantClient(url=...)`, bổ sung payload `security.*` và `build_rbac_filter()` theo mục 5.2.

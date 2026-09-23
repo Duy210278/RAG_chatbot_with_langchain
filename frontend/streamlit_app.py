@@ -5,6 +5,7 @@ Tab "Cấu hình Model & API Key" được gộp vào sidebar cho gọn.
 """
 
 import json
+import mimetypes
 import os
 
 import requests
@@ -125,15 +126,16 @@ with tab_chat:
 
 # ---------- Tab 2: Nạp dữ liệu (Ingestion Dashboard, rút gọn) ----------
 with tab_upload:
-    st.subheader("Nạp tài liệu PDF vào hệ thống")
-    uploaded_file = st.file_uploader("Chọn file PDF", type=["pdf"])
+    st.subheader("Nạp tài liệu vào hệ thống")
+    uploaded_file = st.file_uploader("Chọn file (PDF, DOCX, Markdown, TXT)", type=["pdf", "docx", "md", "txt"])
     up_category = st.selectbox("Phân loại tài liệu", ["GENERAL", "LEGAL_PDF", "CONTRACT", "TECH_SPEC"], key="up_cat")
     is_public = st.checkbox("Tài liệu công khai (is_public)", value=True)
 
     if st.button("🚀 Nạp tài liệu", disabled=uploaded_file is None):
-        with st.spinner("Đang trích xuất, phân mảnh và tạo embedding..."):
+        with st.spinner("Đang trích xuất, phân mảnh và tạo embedding... (PDF scan cần OCR nên có thể chậm hơn)"):
             try:
-                files = {"file": (uploaded_file.name, uploaded_file.getvalue(), "application/pdf")}
+                mime_type = mimetypes.guess_type(uploaded_file.name)[0] or "application/octet-stream"
+                files = {"file": (uploaded_file.name, uploaded_file.getvalue(), mime_type)}
                 data = {"category": up_category, "is_public": str(is_public)}
                 resp = requests.post(f"{API_BASE}/api/v1/documents/upload", files=files, data=data, timeout=300)
                 resp.raise_for_status()
