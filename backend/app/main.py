@@ -6,7 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from .config import get_settings
 from .db import init_db
 from .embeddings import get_embedder
-from .routers import chat, documents
+from .routers import chat, config, documents
 from .vector_store import get_vector_store
 
 
@@ -32,6 +32,7 @@ app.add_middleware(
 
 app.include_router(documents.router)
 app.include_router(chat.router)
+app.include_router(config.router)
 
 
 @app.get("/health")

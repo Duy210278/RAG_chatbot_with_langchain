@@ -18,13 +18,19 @@ class UploadResponse(BaseModel):
     document: DocumentOut
 
 
+class ChatMessage(BaseModel):
+    role: str = Field(pattern="^(user|assistant)$")
+    content: str
+
+
 class ChatRequest(BaseModel):
     message: str
     provider: str = Field(default="anthropic", pattern="^(anthropic|openai|xai|gemini|groq)$")
-    api_key: str | None = None
     model: str | None = None
     top_k: int = 5
     category: str | None = None
+    history: list[ChatMessage] = []
+    api_key: str | None = None  # chỉ dùng khi gọi thẳng API (curl/test) - UI không còn gửi field này
 
 
 class Citation(BaseModel):
@@ -33,3 +39,14 @@ class Citation(BaseModel):
     page_number: int | None = None
     score: float
     snippet: str
+
+
+class ProviderInfo(BaseModel):
+    id: str
+    label: str
+    models: list[str]
+    default_model: str | None = None
+
+
+class ProvidersResponse(BaseModel):
+    providers: list[ProviderInfo]

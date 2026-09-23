@@ -20,6 +20,7 @@ async def answer_question_stream(
     model: str | None,
     top_k: int,
     category: str | None,
+    history: list[dict] | None = None,
 ) -> AsyncIterator[str]:
     """Retrieval -> Context Assembly -> Generation, phát theo Server-Sent Events (mục 6.2)."""
     embedder = get_embedder()
@@ -47,7 +48,9 @@ async def answer_question_stream(
     ]
 
     try:
-        async for token in generate_answer_stream(provider, api_key, model, question, context_blocks):
+        async for token in generate_answer_stream(
+            provider, api_key, model, question, context_blocks, history=history
+        ):
             yield _sse("token", {"text": token})
     except Exception as exc:  # noqa: BLE001 - lỗi gọi LLM (key sai, hết quota...) cần báo về UI thay vì crash SSE
         yield _sse("error", {"message": str(exc)})

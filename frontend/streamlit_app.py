@@ -1,7 +1,10 @@
 """
 Giao diện Streamlit MVP - tương ứng mục 6.1 của tài liệu thiết kế, rút gọn còn
 các phần cốt lõi cho MVP: Chat & Citations, Nạp dữ liệu, Danh sách tài liệu.
-Tab "Cấu hình Model & API Key" được gộp vào sidebar cho gọn.
+
+API key KHÔNG nhập trên UI - chỉ khai báo trong file .env của backend (xem README).
+Sidebar chỉ hiển thị Provider/Model đã có key cấu hình sẵn (lấy từ
+GET /api/v1/config/providers), cùng Top-K.
 """
 
 import json
@@ -15,43 +18,53 @@ API_BASE = os.environ.get("RAG_API_BASE", "http://localhost:8000")
 
 st.set_page_config(page_title="RAG Chatbot Nội bộ", page_icon="🤖", layout="wide")
 
-# ---------- Sidebar: cấu hình model (tương ứng Tab 3 trong thiết kế) ----------
-PROVIDER_LABELS = {
-    "anthropic": "Anthropic Claude",
-    "openai": "OpenAI",
-    "xai": "xAI Grok",
-    "gemini": "Google Gemini (free tier)",
-    "groq": "Groq (free tier)",
-}
-PROVIDER_ENV_VAR = {
-    "anthropic": "ANTHROPIC_API_KEY",
-    "openai": "OPENAI_API_KEY",
-    "xai": "XAI_API_KEY",
-    "gemini": "GOOGLE_API_KEY",
-    "groq": "GROQ_API_KEY",
-}
 
+@st.cache_data(ttl=30)
+def fetch_providers() -> list[dict]:
+    """Danh sách provider ĐÃ có API key trong .env của backend, kèm model khả dụng.
+    Cache 30s để không gọi backend liên tục mỗi lần Streamlit rerun."""
+    resp = requests.get(f"{API_BASE}/api/v1/config/providers", timeout=10)
+    resp.raise_for_status()
+    return resp.json()["providers"]
+
+
+# ---------- Sidebar: chọn Provider/Model đã cấu hình sẵn trong .env + Top-K ----------
 with st.sidebar:
     st.header("⚙️ Cấu hình Model")
-    provider = st.selectbox(
-        "Provider",
-        list(PROVIDER_LABELS.keys()),
-        format_func=lambda p: PROVIDER_LABELS[p],
-    )
-    api_key = st.text_input(
-        PROVIDER_ENV_VAR[provider],
-        type="password",
-        help="Để trống nếu server đã cấu hình sẵn key qua biến môi trường (.env).",
-    )
-    model_override = st.text_input(
-        "Model (tuỳ chọn)", placeholder="vd: claude-sonnet-5 / gpt-4o-mini / grok-4 / gemini-2.5-flash"
-    )
+    try:
+        providers = fetch_providers()
+    except requests.exceptions.RequestException as exc:
+        providers = []
+        st.error(f"❌ Không kết nối được backend ({API_BASE}): {exc}")
+
+    if not providers:
+        st.warning(
+            "⚠️ Chưa có provider nào được cấu hình.\n\n"
+            "Thêm API key vào file `.env` ở thư mục gốc dự án "
+            "(vd: `ANTHROPIC_API_KEY=...` hoặc `GOOGLE_API_KEY=...`), "
+            "rồi khởi động lại backend."
+        )
+        provider = None
+        model = None
+    else:
+        provider_ids = [p["id"] for p in providers]
+        provider_labels = {p["id"]: p["label"] for p in providers}
+        provider = st.selectbox("Provider", provider_ids, format_func=lambda p: provider_labels[p])
+
+        selected = next(p for p in providers if p["id"] == provider)
+        model = st.selectbox("Model", selected["models"])
+
     top_k = st.slider("Top-K tài liệu truy hồi", min_value=1, max_value=10, value=5)
     category = st.selectbox("Phạm vi tài liệu", ["ALL", "GENERAL", "LEGAL_PDF", "CONTRACT", "TECH_SPEC"])
     st.divider()
     st.caption(f"Backend: {API_BASE}")
 
 tab_chat, tab_upload, tab_docs = st.tabs(["💬 Hỏi đáp", "📤 Nạp tài liệu", "📄 Danh sách tài liệu"])
+
+# st.chat_input CHỈ tự ghim cố định xuống đáy màn hình khi được gọi ở cấp ngoài cùng
+# của script - nếu đặt bên trong `with tab_chat:` (1 container) nó sẽ render inline
+# (nằm giữa dòng) thay vì cố định. Vì vậy đặt ở đây, ngoài mọi tab/container.
+question = st.chat_input("Đặt câu hỏi về tài liệu nội bộ...", disabled=provider is None)
 
 # ---------- Tab 1: Hỏi đáp Chatbot & Citation ----------
 with tab_chat:
@@ -67,11 +80,25 @@ with tab_chat:
                         st.markdown(f"**{c['title']}** — trang {c.get('page_number', '—')} (score: {c['score']})")
                         st.caption(c["snippet"])
 
-    question = st.chat_input("Đặt câu hỏi về tài liệu nội bộ...")
     if question:
-        if not api_key:
-            st.warning("⚠️ Vui lòng nhập API Key ở thanh bên trái, hoặc cấu hình sẵn trên server (.env).")
+        if provider is None:
+            st.warning("⚠️ Chưa có provider nào được cấu hình trong .env - xem hướng dẫn ở thanh bên trái.")
         else:
+            # Lấy lịch sử hội thoại TRƯỚC khi thêm câu hỏi mới vào session_state, để làm
+            # ngữ cảnh multi-turn gửi cho LLM (chỉ lấy role/content, bỏ citations).
+            # Lưu ý: KHÔNG được xoá hẳn tin nhắn lỗi khỏi danh sách - Anthropic API bắt buộc
+            # user/assistant phải xen kẽ đúng thứ tự, xoá 1 tin sẽ làm lệch thứ tự và gây lỗi 400.
+            # Thay vào đó thay nội dung lỗi bằng 1 placeholder ngắn để giữ đúng số lượt.
+            history_payload = [
+                {
+                    "role": m["role"],
+                    "content": "(Không trả lời được do lỗi hệ thống ở lượt này.)"
+                    if m["content"].startswith("❌")
+                    else m["content"],
+                }
+                for m in st.session_state.messages
+            ]
+
             st.session_state.messages.append({"role": "user", "content": question})
             with st.chat_message("user"):
                 st.markdown(question)
@@ -86,10 +113,10 @@ with tab_chat:
                         json={
                             "message": question,
                             "provider": provider,
-                            "api_key": api_key or None,
-                            "model": model_override or None,
+                            "model": model,
                             "top_k": top_k,
                             "category": category,
+                            "history": history_payload,
                         },
                         stream=True,
                         timeout=120,

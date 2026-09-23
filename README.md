@@ -14,6 +14,8 @@ Chunking → Embedding (local) → Vector Search (Qdrant) → RAG Generation (Cl
 | LLM | OpenAI/Anthropic/Gemini/Ollama | **Anthropic Claude, OpenAI, xAI Grok, Google Gemini, Groq**, chọn ở UI |
 | Auth/RBAC | JWT, phân quyền role/department | Chưa có (single-user MVP) |
 | Streaming | SSE | Có, qua `StreamingResponse` |
+| API key | Lưu mã hoá trong PostgreSQL, nhập qua UI (Tab Config) | **Chỉ khai báo trong `.env`** (không nhập trên UI) - UI tự lấy danh sách provider/model đã cấu hình qua `GET /api/v1/config/providers` |
+| Hội thoại | Lưu `chat_sessions`/`chat_messages` trong PostgreSQL | **Multi-turn trong phiên hiện tại**: lịch sử hội thoại (session_state phía UI) được gửi kèm mỗi request làm ngữ cảnh cho LLM, giới hạn `MAX_HISTORY_MESSAGES` tin nhắn gần nhất - chưa lưu persistent qua các lần mở lại app |
 
 ## Cài đặt
 
@@ -30,9 +32,10 @@ source .venv/bin/activate
 pip install -r backend/requirements.txt
 pip install -r frontend/requirements.txt
 
-# 3. Cấu hình API key (tuỳ chọn — có thể bỏ qua và nhập key trực tiếp trên UI)
+# 3. Cấu hình API key - BẮT BUỘC, giao diện không còn ô nhập API key nữa
 cp .env.example .env
-# rồi mở .env, điền API key của provider bạn muốn dùng
+# rồi mở .env, điền API key của (các) provider bạn muốn dùng - provider nào có key
+# sẽ tự động hiện trong dropdown "Provider" trên UI, không cần điền hết cả 5.
 ```
 
 ### Cài Tesseract (bắt buộc để nạp PDF scan/ảnh — bỏ qua nếu chỉ dùng PDF có text layer)
@@ -84,7 +87,18 @@ curl -X POST http://localhost:8000/api/v1/documents/upload \
 
 curl -N -X POST http://localhost:8000/api/v1/chat/completions \
   -H "Content-Type: application/json" \
-  -d '{"message": "Nội dung tài liệu nói gì?", "provider": "anthropic", "api_key": "sk-ant-..."}'
+  -d '{
+    "message": "Nội dung tài liệu nói gì?",
+    "provider": "anthropic",
+    "model": "claude-sonnet-5",
+    "history": [
+      {"role": "user", "content": "Câu hỏi trước đó"},
+      {"role": "assistant", "content": "Câu trả lời trước đó"}
+    ]
+  }'
+# (api_key trong .env sẽ tự được dùng - chỉ cần truyền "api_key" trong body nếu muốn override khi test)
+
+curl http://localhost:8000/api/v1/config/providers  # xem provider nào đang có key hợp lệ
 ```
 
 ## Hướng mở rộng tiếp theo (theo tài liệu thiết kế)

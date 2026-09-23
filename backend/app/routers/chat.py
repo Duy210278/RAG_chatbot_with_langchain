@@ -13,19 +13,15 @@ router = APIRouter(prefix="/api/v1/chat", tags=["chat"])
 @router.post("/completions")
 async def chat_completions(payload: schemas.ChatRequest, db: Session = Depends(get_db)):
     settings = get_settings()
-    default_keys = {
-        "anthropic": settings.anthropic_api_key,
-        "openai": settings.openai_api_key,
-        "xai": settings.xai_api_key,
-        "gemini": settings.google_api_key,
-        "groq": settings.groq_api_key,
-    }
-    api_key = payload.api_key or default_keys.get(payload.provider)
+    # api_key trên payload chỉ còn dùng cho gọi API trực tiếp (curl/test) - UI không gửi field này nữa,
+    # luôn lấy từ .env theo provider đã chọn.
+    api_key = payload.api_key or settings.api_key_for(payload.provider)
     if not api_key:
         raise HTTPException(
             400,
-            f"Chưa cấu hình API key cho provider '{payload.provider}'. "
-            "Nhập API key ở thanh bên trái giao diện, hoặc đặt biến môi trường tương ứng trong file .env.",
+            f"Chưa cấu hình API key cho provider '{payload.provider}' trong file .env "
+            f"(biến {payload.provider.upper()}_API_KEY hoặc GOOGLE_API_KEY với Gemini). "
+            "Khởi động lại backend sau khi thêm key.",
         )
 
     generator = answer_question_stream(
@@ -36,5 +32,6 @@ async def chat_completions(payload: schemas.ChatRequest, db: Session = Depends(g
         model=payload.model,
         top_k=payload.top_k,
         category=payload.category,
+        history=[h.model_dump() for h in payload.history],
     )
     return StreamingResponse(generator, media_type="text/event-stream")
