@@ -1,13 +1,13 @@
 # RAG Chatbot v2 — MVP
 
-MVP triển khai từ [tai_lieu_thiet_ke_chatbot_v2.md](tai_lieu_thiet_ke_chatbot_v2.md): pipeline Ingestion (PDF/DOCX/Markdown/TXT) →
+MVP triển khai từ [tai_lieu_thiet_ke_chatbot_v2.md](tai_lieu_thiet_ke_chatbot_v2.md): pipeline Ingestion (PDF/DOCX/Markdown/TXT/Ảnh) →
 Chunking → Embedding (local) → Vector Search (Qdrant) → RAG Generation (Claude/OpenAI/Grok/Gemini/Groq) → Streamlit UI.
 
 ## Kiến trúc MVP so với thiết kế đầy đủ
 
 | Thành phần | Thiết kế đầy đủ | MVP hiện tại |
 | :--- | :--- | :--- |
-| Loại tài liệu | 11 loại (PDF, OCR, Excel, Code, Email...) | **PDF (kể cả scan/OCR), DOCX, Markdown, TXT** (kiến trúc dễ mở rộng thêm) |
+| Loại tài liệu | 11 loại (PDF, OCR, Excel, Code, Email...) | **PDF (kể cả scan/OCR), DOCX, Markdown, TXT, Ảnh (OCR)** (kiến trúc dễ mở rộng thêm) |
 | Vector DB | Qdrant/Milvus server, hybrid search | **Qdrant local mode** (file-based, không cần Docker) |
 | Metadata DB | PostgreSQL (RBAC, audit logs đầy đủ) | **SQLite** (documents + chunks, chưa RBAC/audit) |
 | Embedding | Chưa chỉ định | **Local, miễn phí**: `intfloat/multilingual-e5-small` (đa ngôn ngữ, hỗ trợ tiếng Việt) |
@@ -104,7 +104,7 @@ curl http://localhost:8000/api/v1/config/providers  # xem provider nào đang c�
 ## Hướng mở rộng tiếp theo (theo tài liệu thiết kế)
 
 1. **Thêm loại tài liệu**: viết thêm hàm `chunk_xxx()` trong `backend/app/ingestion.py` rồi đăng ký vào
-   dict `CHUNKERS` (đã có sẵn PDF/DOCX/Markdown/TXT theo cách này) cho các loại còn lại
+   dict `CHUNKERS` (đã có sẵn PDF/DOCX/Markdown/TXT/Ảnh theo cách này) cho các loại còn lại
    (Excel/CSV, Email, Source Code, DB...) theo mục 2-3 của tài liệu thiết kế.
 2. **Migrate sang PostgreSQL**: dùng đúng DDL ở mục 4 của tài liệu thiết kế, thêm Auth (JWT) + RBAC.
 3. **Migrate Qdrant local → Qdrant server**: chỉ cần đổi `QdrantClient(path=...)` thành

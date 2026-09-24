@@ -5,6 +5,8 @@ Ma trận Ingestion (mục 2 tài liệu thiết kế) - hiện đã hỗ trợ:
   - Word (.docx, python-docx)
   - Markdown (.md) - structure-aware theo heading (mục 3.1 tài liệu thiết kế)
   - Text thuần (.txt)
+  - Ảnh (.png/.jpg/.jpeg/.bmp/.tiff/.webp) - OCR trực tiếp bằng Tesseract, cùng hạ tầng dùng
+    cho PDF scan bên trên
 
 Các loại còn lại (Excel/CSV, Email, Source Code, DB, Log...) sẽ bổ sung ở các bước tiếp theo,
 mỗi loại chỉ cần thêm 1 hàm `chunk_xxx()` rồi đăng ký vào `chunk_document()` + `ALLOWED_EXTENSIONS`
@@ -76,12 +78,17 @@ def extract_pdf_pages(file_path: str) -> list[tuple[int, str]]:
 
 
 # ---------------------------------------------------------------------------
-# PDF scan / ảnh (không có text layer) -> OCR bằng Tesseract
+# OCR dùng chung (Tesseract) - cho cả PDF scan và ảnh upload trực tiếp
 # ---------------------------------------------------------------------------
-def extract_pdf_pages_ocr(file_path: str, lang: str = "vie+eng") -> list[tuple[int, str]]:
-    """OCR từng trang PDF scan bằng Tesseract (yêu cầu đã cài `tesseract` +
-    gói ngôn ngữ 'vie'). Render trang thành ảnh độ phân giải cao rồi OCR."""
+def _ocr_image(image, lang: str = "vie+eng") -> str:
+    """OCR 1 ảnh (PIL Image) bằng Tesseract, yêu cầu đã cài `tesseract` + gói ngôn ngữ 'vie'."""
     import pytesseract
+
+    return pytesseract.image_to_string(image, lang=lang).strip()
+
+
+def extract_pdf_pages_ocr(file_path: str, lang: str = "vie+eng") -> list[tuple[int, str]]:
+    """OCR từng trang PDF scan bằng Tesseract. Render trang thành ảnh độ phân giải cao rồi OCR."""
     from PIL import Image
 
     doc = fitz.open(file_path)
@@ -89,7 +96,7 @@ def extract_pdf_pages_ocr(file_path: str, lang: str = "vie+eng") -> list[tuple[i
     for i, page in enumerate(doc, start=1):
         pix = page.get_pixmap(dpi=250)
         image = Image.open(io.BytesIO(pix.tobytes("png")))
-        text = pytesseract.image_to_string(image, lang=lang).strip()
+        text = _ocr_image(image, lang=lang)
         if text:
             pages.append((i, text))
     doc.close()
@@ -103,6 +110,21 @@ def chunk_pdf(file_path: str) -> list[dict]:
     if not pages:
         pages = extract_pdf_pages_ocr(file_path)
     return _chunk_pages(pages)
+
+
+# ---------------------------------------------------------------------------
+# Ảnh upload trực tiếp (.png/.jpg/.jpeg/.bmp/.tiff/.webp) -> OCR toàn bộ ảnh
+# ---------------------------------------------------------------------------
+def chunk_image(file_path: str) -> list[dict]:
+    """OCR 1 file ảnh độc lập (không nhúng trong PDF) - dùng chung hàm _ocr_image()
+    với nhánh PDF scan bên trên. Không có khái niệm trang nên page_number = None."""
+    from PIL import Image
+
+    with Image.open(file_path) as image:
+        text = _ocr_image(image)
+    if not text:
+        return []
+    return _chunk_pages([(None, text)])
 
 
 # ---------------------------------------------------------------------------
@@ -157,6 +179,12 @@ CHUNKERS = {
     ".docx": chunk_docx,
     ".md": chunk_markdown,
     ".txt": chunk_txt,
+    ".png": chunk_image,
+    ".jpg": chunk_image,
+    ".jpeg": chunk_image,
+    ".bmp": chunk_image,
+    ".tiff": chunk_image,
+    ".webp": chunk_image,
 }
 
 

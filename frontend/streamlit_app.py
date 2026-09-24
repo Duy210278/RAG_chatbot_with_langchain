@@ -170,12 +170,16 @@ with tab_chat:
 # ---------- Tab 2: Nạp dữ liệu (Ingestion Dashboard, rút gọn) ----------
 with tab_upload:
     st.subheader("Nạp tài liệu vào hệ thống")
-    uploaded_file = st.file_uploader("Chọn file (PDF, DOCX, Markdown, TXT)", type=["pdf", "docx", "md", "txt"])
+    uploaded_file = st.file_uploader(
+        "Chọn file (PDF, DOCX, Markdown, TXT, hoặc ảnh)",
+        type=["pdf", "docx", "md", "txt", "png", "jpg", "jpeg", "bmp", "tiff", "webp"],
+        help="Ảnh (png/jpg/jpeg/bmp/tiff/webp) sẽ được OCR toàn bộ bằng Tesseract (vie+eng).",
+    )
     up_category = st.selectbox("Phân loại tài liệu", ["GENERAL", "LEGAL_PDF", "CONTRACT", "TECH_SPEC"], key="up_cat")
     is_public = st.checkbox("Tài liệu công khai (is_public)", value=True)
 
     if st.button("🚀 Nạp tài liệu", disabled=uploaded_file is None):
-        with st.spinner("Đang trích xuất, phân mảnh và tạo embedding... (PDF scan cần OCR nên có thể chậm hơn)"):
+        with st.spinner("Đang trích xuất, phân mảnh và tạo embedding... (ảnh/PDF scan cần OCR nên có thể chậm hơn)"):
             try:
                 mime_type = mimetypes.guess_type(uploaded_file.name)[0] or "application/octet-stream"
                 files = {"file": (uploaded_file.name, uploaded_file.getvalue(), mime_type)}
