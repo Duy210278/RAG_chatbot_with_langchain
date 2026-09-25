@@ -7,8 +7,11 @@ Ma trận Ingestion (mục 2 tài liệu thiết kế) - hiện đã hỗ trợ:
   - Text thuần (.txt)
   - Ảnh (.png/.jpg/.jpeg/.bmp/.tiff/.webp) - OCR trực tiếp bằng Tesseract, cùng hạ tầng dùng
     cho PDF scan bên trên
+  - HTML (.html/.htm) - wiki/tài liệu đào tạo nội bộ: loại bỏ CSS/JS/navigation, quy về dạng
+    markdown theo heading rồi tái dùng chiến lược structure-aware của Markdown
 
-Các loại còn lại (Excel/CSV, Email, Source Code, DB, Log...) sẽ bổ sung ở các bước tiếp theo,
+Các loại còn lại (Excel/CSV, Email, Source Code, DB, Log, PDF pháp lý structure-aware) chưa
+làm theo yêu cầu hiện tại - sẽ bổ sung ở các bước tiếp theo nếu cần,
 mỗi loại chỉ cần thêm 1 hàm `chunk_xxx()` rồi đăng ký vào `chunk_document()` + `ALLOWED_EXTENSIONS`
 trong routers/documents.py.
 """
@@ -149,10 +152,9 @@ def chunk_docx(file_path: str) -> list[dict]:
 # ---------------------------------------------------------------------------
 # Markdown (.md) - structure-aware theo heading trước, recursive trong từng section
 # ---------------------------------------------------------------------------
-def chunk_markdown(file_path: str) -> list[dict]:
-    with open(file_path, encoding="utf-8") as f:
-        content = f.read()
-
+def _chunk_markdown_text(content: str) -> list[dict]:
+    """Cắt structure-aware theo heading H1-H3 - dùng chung cho .md và .html
+    (HTML được quy về dạng markdown trước khi gọi hàm này)."""
     headers_to_split_on = [("#", "h1"), ("##", "h2"), ("###", "h3")]
     md_splitter = MarkdownHeaderTextSplitter(headers_to_split_on=headers_to_split_on, strip_headers=False)
     sections = md_splitter.split_text(content)
@@ -160,6 +162,51 @@ def chunk_markdown(file_path: str) -> list[dict]:
     if not sections:
         return _chunk_pages([(None, content)])
     return _chunk_pages([(None, section.page_content) for section in sections])
+
+
+def chunk_markdown(file_path: str) -> list[dict]:
+    with open(file_path, encoding="utf-8") as f:
+        content = f.read()
+    return _chunk_markdown_text(content)
+
+
+# ---------------------------------------------------------------------------
+# HTML (.html/.htm) - wiki/tài liệu đào tạo nội bộ
+# ---------------------------------------------------------------------------
+def _html_to_markdown_like(html: str) -> str:
+    """Loại bỏ CSS/JS/navigation/footer, quy nội dung còn lại về dạng markdown
+    (heading -> '#'..'######', các thẻ nội dung -> đoạn văn) để tái dùng chiến
+    lược structure-aware của Markdown thay vì viết logic cắt HTML riêng."""
+    from bs4 import BeautifulSoup
+
+    soup = BeautifulSoup(html, "html.parser")
+    # Lưu ý: KHÔNG xoá cả thẻ <header> - nhiều trang wiki/CMS đặt tiêu đề chính
+    # (h1) bên trong <header> (vd <header><h1>...</h1></header>), xoá cả khối sẽ
+    # mất luôn tiêu đề. Chỉ xoá <nav> bên trong (nếu có) - đó mới thực sự là noise.
+    for tag in soup(["script", "style", "nav", "footer", "aside", "form", "iframe", "svg", "noscript"]):
+        tag.decompose()
+
+    lines: list[str] = []
+    content_tags = ["h1", "h2", "h3", "h4", "h5", "h6", "p", "li", "blockquote", "td", "th"]
+    for el in soup.find_all(content_tags):
+        text = el.get_text(" ", strip=True)
+        if not text:
+            continue
+        if el.name[0] == "h" and el.name[1:].isdigit():
+            lines.append(f"{'#' * int(el.name[1])} {text}")
+        else:
+            lines.append(text)
+        # Xoá khỏi cây ngay sau khi lấy text, tránh bị lặp nội dung khi thẻ cha
+        # (vd <li>) cũng khớp content_tags và chứa thẻ con (vd <p>) bên trong.
+        el.decompose()
+    return "\n\n".join(lines)
+
+
+def chunk_html(file_path: str) -> list[dict]:
+    with open(file_path, encoding="utf-8") as f:
+        raw_html = f.read()
+    content = _html_to_markdown_like(raw_html)
+    return _chunk_markdown_text(content)
 
 
 # ---------------------------------------------------------------------------
@@ -179,6 +226,8 @@ CHUNKERS = {
     ".docx": chunk_docx,
     ".md": chunk_markdown,
     ".txt": chunk_txt,
+    ".html": chunk_html,
+    ".htm": chunk_html,
     ".png": chunk_image,
     ".jpg": chunk_image,
     ".jpeg": chunk_image,
