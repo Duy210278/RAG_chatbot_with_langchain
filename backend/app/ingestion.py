@@ -3,6 +3,8 @@ Ma trận Ingestion (mục 2 tài liệu thiết kế) - hiện đã hỗ trợ:
   - PDF có text layer (PyMuPDF)
   - PDF scan / ảnh, không có text layer (tự động fallback sang OCR Tesseract, hỗ trợ tiếng Việt)
   - Word (.docx, python-docx)
+  - PowerPoint (.pptx) - mỗi slide = 1 "trang": text/bảng, OCR ảnh trong slide, dữ liệu chart
+    thật (không phải OCR), ghi chú thuyết trình
   - Markdown (.md) - structure-aware theo heading (mục 3.1 tài liệu thiết kế)
   - Text thuần (.txt)
   - Ảnh (.png/.jpg/.jpeg/.bmp/.tiff/.webp) - OCR trực tiếp bằng Tesseract, cùng hạ tầng dùng
@@ -150,6 +152,88 @@ def chunk_docx(file_path: str) -> list[dict]:
 
 
 # ---------------------------------------------------------------------------
+# PowerPoint (.pptx) - mỗi slide = 1 "trang", tái dùng _chunk_pages() như PDF.
+# Gộp cả text/bảng, OCR ảnh (tái dùng _ocr_image), dữ liệu chart thật, và ghi
+# chú thuyết trình (speaker notes) vào nội dung của từng slide.
+# ---------------------------------------------------------------------------
+def _extract_chart_text(chart) -> str:
+    """Đọc dữ liệu SỐ THẬT từ chart PowerPoint gốc (không phải ảnh chụp chart) -
+    chính xác hơn hẳn so với OCR vì lấy thẳng category/series từ XML của chart."""
+    plot = chart.plots[0]
+    categories = [str(c) if c is not None else "" for c in plot.categories]
+    series_list = list(plot.series)
+    if not series_list:
+        return ""
+
+    header = ["Danh mục"] + [s.name or f"Chuỗi {i + 1}" for i, s in enumerate(series_list)]
+    lines = [" | ".join(header)]
+    for idx, cat in enumerate(categories):
+        row = [cat]
+        for s in series_list:
+            values = list(s.values)
+            val = values[idx] if idx < len(values) else ""
+            row.append("" if val is None else str(val))
+        lines.append(" | ".join(row))
+    return "[Dữ liệu biểu đồ]\n" + "\n".join(lines)
+
+
+def extract_pptx_slides(file_path: str) -> list[tuple[int, str]]:
+    """Trả về (số slide, nội dung) cho từng slide - số slide đóng vai trò page_number.
+    Mỗi phần trích xuất (text, bảng, ảnh, chart) được bọc try/except riêng: 1 shape lỗi
+    (vd ảnh hỏng, chart dạng lạ) chỉ mất phần đó, không làm hỏng cả slide."""
+    from pptx import Presentation
+    from pptx.enum.shapes import MSO_SHAPE_TYPE
+    from PIL import Image
+
+    prs = Presentation(file_path)
+    slides: list[tuple[int, str]] = []
+    for i, slide in enumerate(prs.slides, start=1):
+        parts: list[str] = []
+        for shape in slide.shapes:
+            if getattr(shape, "has_text_frame", False):
+                text = shape.text_frame.text.strip()
+                if text:
+                    parts.append(text)
+
+            if getattr(shape, "has_table", False):
+                for row in shape.table.rows:
+                    cells = [cell.text.strip() for cell in row.cells]
+                    if any(cells):
+                        parts.append(" | ".join(cells))
+
+            if getattr(shape, "has_chart", False):
+                try:
+                    chart_text = _extract_chart_text(shape.chart)
+                    if chart_text:
+                        parts.append(chart_text)
+                except Exception:  # noqa: BLE001 - chart dạng lạ, bỏ qua phần này
+                    pass
+
+            if shape.shape_type == MSO_SHAPE_TYPE.PICTURE:
+                try:
+                    image = Image.open(io.BytesIO(shape.image.blob))
+                    ocr_text = _ocr_image(image)
+                    if ocr_text:
+                        parts.append(f"[Ảnh trong slide] {ocr_text}")
+                except Exception:  # noqa: BLE001 - ảnh hỏng/không đọc được, bỏ qua ảnh này
+                    pass
+
+        if getattr(slide, "has_notes_slide", False):
+            notes_text = slide.notes_slide.notes_text_frame.text.strip()
+            if notes_text:
+                parts.append(f"[Ghi chú thuyết trình] {notes_text}")
+
+        text = "\n\n".join(parts)
+        if text:
+            slides.append((i, text))
+    return slides
+
+
+def chunk_pptx(file_path: str) -> list[dict]:
+    return _chunk_pages(extract_pptx_slides(file_path))
+
+
+# ---------------------------------------------------------------------------
 # Markdown (.md) - structure-aware theo heading trước, recursive trong từng section
 # ---------------------------------------------------------------------------
 def _chunk_markdown_text(content: str) -> list[dict]:
@@ -224,6 +308,7 @@ def chunk_txt(file_path: str) -> list[dict]:
 CHUNKERS = {
     ".pdf": chunk_pdf,
     ".docx": chunk_docx,
+    ".pptx": chunk_pptx,
     ".md": chunk_markdown,
     ".txt": chunk_txt,
     ".html": chunk_html,
