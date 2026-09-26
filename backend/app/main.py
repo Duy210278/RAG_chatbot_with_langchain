@@ -6,6 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from .config import get_settings
 from .db import init_db
 from .embeddings import get_embedder
+from .reranker import get_reranker
 from .routers import chat, config, documents
 from .vector_store import get_vector_store
 
@@ -14,6 +15,7 @@ from .vector_store import get_vector_store
 async def lifespan(app: FastAPI):
     init_db()
     get_embedder()  # tải model embedding trước để request đầu tiên không bị chậm
+    get_reranker()  # tương tự cho model rerank (lần chạy đầu sẽ tải model từ HuggingFace)
     get_vector_store()  # khởi tạo Qdrant local + collection
     yield
 

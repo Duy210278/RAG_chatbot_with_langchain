@@ -30,6 +30,8 @@ class Document(Base):
     file_path: Mapped[str] = mapped_column(String(1000))
     file_extension: Mapped[str] = mapped_column(String(20))
     file_size_bytes: Mapped[int] = mapped_column(BigInteger)
+    # SHA-256 nội dung file - chặn nạp trùng cùng một file (kể cả khi đổi tên)
+    content_hash: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
     category: Mapped[str] = mapped_column(String(50), default="GENERAL")
     is_public: Mapped[bool] = mapped_column(Boolean, default=True)
     status: Mapped[str] = mapped_column(String(50), default="PENDING")  # PENDING/PROCESSING/COMPLETED/FAILED

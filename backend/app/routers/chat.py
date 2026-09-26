@@ -33,5 +33,6 @@ async def chat_completions(payload: schemas.ChatRequest, db: Session = Depends(g
         top_k=payload.top_k,
         category=payload.category,
         history=[h.model_dump() for h in payload.history],
+        use_rerank=payload.use_rerank,
     )
     return StreamingResponse(generator, media_type="text/event-stream")

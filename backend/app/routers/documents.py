@@ -1,3 +1,4 @@
+import hashlib
 import shutil
 import uuid
 from pathlib import Path
@@ -32,6 +33,21 @@ async def upload_document(
         supported = ", ".join(sorted(ALLOWED_EXTENSIONS))
         raise HTTPException(400, f"Định dạng {ext} chưa được hỗ trợ. Hiện chỉ hỗ trợ: {supported}.")
 
+    # Chặn nạp trùng: cùng nội dung file (dù đổi tên) sẽ tạo chunk trùng, chiếm chỗ trong top-k.
+    # Bỏ qua bản FAILED để người dùng vẫn nạp lại được file từng xử lý lỗi.
+    content_hash = _sha256(file.file)
+    duplicate = (
+        db.query(models.Document)
+        .filter(models.Document.content_hash == content_hash, models.Document.status != "FAILED")
+        .first()
+    )
+    if duplicate:
+        raise HTTPException(
+            409,
+            f"Tài liệu này đã được nạp trước đó với tên '{duplicate.title}' (id: {duplicate.id}). "
+            "Muốn nạp lại, hãy xóa bản cũ ở tab 'Danh sách tài liệu' trước.",
+        )
+
     doc_id = str(uuid.uuid4())
     saved_path = UPLOAD_DIR / f"{doc_id}{ext}"
     with saved_path.open("wb") as out:
@@ -43,6 +59,7 @@ async def upload_document(
         file_path=str(saved_path),
         file_extension=ext,
         file_size_bytes=saved_path.stat().st_size,
+        content_hash=content_hash,
         category=category,
         is_public=is_public,
         status="PROCESSING",
@@ -118,6 +135,15 @@ def delete_document(document_id: str, db: Session = Depends(get_db)):
     db.delete(document)
     db.commit()
     return {"status": "deleted"}
+
+
+def _sha256(stream) -> str:
+    """Hash theo từng khối 1MB để không phải nạp cả file lớn vào RAM, rồi tua về đầu để lưu file."""
+    hasher = hashlib.sha256()
+    while block := stream.read(1024 * 1024):
+        hasher.update(block)
+    stream.seek(0)
+    return hasher.hexdigest()
 
 
 def _to_document_out(document: models.Document) -> schemas.DocumentOut:

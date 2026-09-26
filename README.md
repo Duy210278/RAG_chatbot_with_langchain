@@ -109,10 +109,9 @@ curl http://localhost:8000/api/v1/config/providers  # xem provider nào đang c�
 2. **Migrate sang PostgreSQL**: dùng đúng DDL ở mục 4 của tài liệu thiết kế, thêm Auth (JWT) + RBAC.
 3. **Migrate Qdrant local → Qdrant server**: chỉ cần đổi `QdrantClient(path=...)` thành
    `QdrantClient(url=...)`, bổ sung payload `security.*` và `build_rbac_filter()` theo mục 5.2.
-4. **Reranking**: thêm bước rerank (cross-encoder) sau khi lấy top-k từ vector search.
-5. **Hybrid search**: kết hợp BM25/sparse vectors với dense vector search hiện tại.
-6. **Docker Compose**: đóng gói Postgres + Qdrant server + backend + frontend khi cần triển khai thật.
-7. **Thêm LLM provider khác** (DeepSeek, Mistral, OpenRouter, Ollama/vLLM local...): hầu hết tương thích chuẩn
+4. **Hybrid search**: kết hợp BM25/sparse vectors với dense vector search hiện tại.
+5. **Docker Compose**: đóng gói Postgres + Qdrant server + backend + frontend khi cần triển khai thật.
+6. **Thêm LLM provider khác** (DeepSeek, Mistral, OpenRouter, Ollama/vLLM local...): hầu hết tương thích chuẩn
    OpenAI Chat Completions, chỉ cần gọi `_stream_openai_compatible(api_key, model, system, user, base_url=...)`
    có sẵn trong `backend/app/llm.py` với `base_url` riêng của provider đó — không cần viết hàm mới
    (xem cách đã làm với xAI Grok).

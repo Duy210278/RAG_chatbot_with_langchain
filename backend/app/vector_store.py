@@ -32,7 +32,10 @@ class VectorStore:
 
     def search(self, query_vector: list[float], top_k: int, category: str | None = None):
         """Trả về danh sách điểm (mỗi điểm có .score, .payload) - dùng query_points
-        vì .search() đã bị loại bỏ khỏi qdrant-client >= 1.11."""
+        vì .search() đã bị loại bỏ khỏi qdrant-client >= 1.11.
+
+        Lấy dư gấp đôi rồi bỏ các chunk trùng nội dung (vd. cùng nội dung nằm ở 2 file khác nhau)
+        để chúng không chiếm chỗ của đoạn khác trong top-k."""
         query_filter = None
         if category and category != "ALL":
             query_filter = qmodels.Filter(
@@ -42,9 +45,15 @@ class VectorStore:
             collection_name=self.collection,
             query=query_vector,
             query_filter=query_filter,
-            limit=top_k,
+            limit=top_k * 2,
         )
-        return response.points
+        unique_points, seen = [], set()
+        for point in response.points:
+            key = " ".join(point.payload["content"].split())
+            if key not in seen:
+                seen.add(key)
+                unique_points.append(point)
+        return unique_points[:top_k]
 
     def delete_document(self, document_id: str) -> None:
         self.client.delete(

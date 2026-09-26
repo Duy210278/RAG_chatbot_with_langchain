@@ -53,6 +53,13 @@ class Settings(BaseSettings):
     chunk_size: int = 800
     chunk_overlap: int = 150
 
+    # --- Reranker (cross-encoder chấm lại các đoạn mà vector search tìm được) ---
+    # Mặc định dùng model nhỏ đa ngôn ngữ (có tiếng Việt) vì chạy CPU: ~0.8s cho 20 đoạn.
+    # BAAI/bge-reranker-v2-m3 chính xác hơn nhưng ~9s cho 20 đoạn trên CPU - chỉ nên dùng khi có GPU.
+    reranker_model: str = "cross-encoder/mmarco-mMiniLMv2-L12-H384-v1"
+    rerank_candidates: int = 20  # số đoạn lấy từ vector search để đưa vào chấm lại
+    rerank_threshold: float = 0.3  # điểm liên quan tối thiểu (0-1) để 1 đoạn được gửi cho LLM
+
     # --- Vector store ---
     qdrant_collection: str = "rag_chunks"
 

@@ -4,7 +4,7 @@ các phần cốt lõi cho MVP: Chat & Citations, Nạp dữ liệu, Danh sách 
 
 API key KHÔNG nhập trên UI - chỉ khai báo trong file .env của backend (xem README).
 Sidebar chỉ hiển thị Provider/Model đã có key cấu hình sẵn (lấy từ
-GET /api/v1/config/providers), cùng Top-K.
+GET /api/v1/config/providers), cùng Top-K và bật/tắt Reranker.
 """
 
 import json
@@ -26,6 +26,26 @@ def fetch_providers() -> list[dict]:
     resp = requests.get(f"{API_BASE}/api/v1/config/providers", timeout=10)
     resp.raise_for_status()
     return resp.json()["providers"]
+
+
+@st.dialog("Xác nhận xóa tài liệu")
+def confirm_delete_dialog(doc: dict) -> None:
+    """Hộp thoại xác nhận trước khi xóa, vì xóa là vĩnh viễn (file gốc, DB, toàn bộ chunk trên Qdrant)."""
+    st.markdown(f"Xóa **{doc['title']}** ({doc['chunk_count']} chunks, nạp lúc {doc['created_at'][:19]})?")
+    st.warning("File gốc, bản ghi và toàn bộ chunk trên Qdrant sẽ bị xóa vĩnh viễn, không thể khôi phục.")
+    delete_col, cancel_col = st.columns(2)
+    if delete_col.button("🗑️ Xóa vĩnh viễn", type="primary"):
+        try:
+            resp = requests.delete(f"{API_BASE}/api/v1/documents/{doc['id']}", timeout=60)
+            resp.raise_for_status()
+        except requests.exceptions.RequestException as exc:
+            st.error(f"❌ Không xóa được: {exc}")
+            return
+        # st.rerun() đóng dialog - lưu thông báo vào session_state để hiện sau khi tải lại
+        st.session_state.flash = f"🗑️ Đã xóa '{doc['title']}' ({doc['id'][:8]})."
+        st.rerun()
+    if cancel_col.button("Hủy"):
+        st.rerun()
 
 
 # ---------- Sidebar: chọn Provider/Model đã cấu hình sẵn trong .env + Top-K ----------
@@ -58,7 +78,21 @@ with st.sidebar:
         selected = next(p for p in providers if p["id"] == provider)
         model = st.selectbox("Model", selected["models"])
 
-    top_k = st.slider("Top-K tài liệu truy hồi", min_value=1, max_value=10, value=5)
+    use_rerank = st.checkbox(
+        "⚖️ Bật Reranker",
+        value=True,
+        help="Chấm lại các đoạn tìm được bằng model cross-encoder và chỉ gửi cho LLM những đoạn thật sự liên quan.",
+    )
+    top_k = st.slider(
+        "Top-K: số đoạn tối đa gửi cho LLM",
+        min_value=1,
+        max_value=20,
+        value=8,
+        help=(
+            "Khi bật Reranker: chỉ gửi các đoạn đạt ngưỡng liên quan (có thể ít hơn K). "
+            "Nếu không đoạn nào đạt, gửi K đoạn điểm cao nhất. Khi tắt: luôn gửi đúng K đoạn."
+        ),
+    )
     category = st.selectbox("Phạm vi tài liệu", ["ALL", "GENERAL", "LEGAL_PDF", "CONTRACT", "TECH_SPEC"])
     st.divider()
     st.caption(f"Backend: {API_BASE}")
@@ -124,6 +158,7 @@ with tab_chat:
                             "provider": provider,
                             "model": model,
                             "top_k": top_k,
+                            "use_rerank": use_rerank,
                             "category": category,
                             "history": history_payload,
                         },
@@ -189,15 +224,20 @@ with tab_upload:
                 files = {"file": (uploaded_file.name, uploaded_file.getvalue(), mime_type)}
                 data = {"category": up_category, "is_public": str(is_public)}
                 resp = requests.post(f"{API_BASE}/api/v1/documents/upload", files=files, data=data, timeout=300)
-                resp.raise_for_status()
-                result = resp.json()["document"]
-                st.success(f"✅ Đã nạp '{result['title']}' — {result['chunk_count']} chunks.")
+                if resp.status_code == 409:  # file trùng nội dung với tài liệu đã nạp
+                    st.warning(f"⚠️ {resp.json()['detail']}")
+                else:
+                    resp.raise_for_status()
+                    result = resp.json()["document"]
+                    st.success(f"✅ Đã nạp '{result['title']}' — {result['chunk_count']} chunks.")
             except requests.exceptions.RequestException as exc:
                 st.error(f"❌ Lỗi: {exc}")
 
 # ---------- Tab 3: Danh sách tài liệu ----------
 with tab_docs:
     st.subheader("Tài liệu đã nạp")
+    if flash := st.session_state.pop("flash", None):
+        st.success(flash)
     if st.button("🔄 Tải lại danh sách"):
         st.rerun()
     try:
@@ -208,5 +248,17 @@ with tab_docs:
             st.info("Chưa có tài liệu nào được nạp.")
         else:
             st.dataframe(docs, use_container_width=True)
+
+            st.markdown("##### 🗑️ Xóa tài liệu")
+            # Kèm thời gian nạp + id rút gọn để phân biệt các tài liệu trùng tên
+            doc_to_delete = st.selectbox(
+                "Chọn tài liệu cần xóa",
+                docs,
+                format_func=lambda d: f"{d['title']} — {d['chunk_count']} chunks — {d['created_at'][:19]} ({d['id'][:8]})",
+                index=None,
+                placeholder="Chọn tài liệu...",
+            )
+            if st.button("🗑️ Xóa tài liệu", disabled=doc_to_delete is None):
+                confirm_delete_dialog(doc_to_delete)
     except requests.exceptions.RequestException as exc:
         st.error(f"❌ Không thể tải danh sách tài liệu: {exc}")

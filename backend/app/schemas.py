@@ -27,7 +27,8 @@ class ChatRequest(BaseModel):
     message: str
     provider: str = Field(default="anthropic", pattern="^(anthropic|openai|xai|gemini|groq)$")
     model: str | None = None
-    top_k: int = 5
+    top_k: int = 5  # khi bật rerank: số đoạn TỐI ĐA gửi cho LLM (có thể ít hơn nếu ít đoạn đạt ngưỡng)
+    use_rerank: bool = True
     category: str | None = None
     history: list[ChatMessage] = []
     api_key: str | None = None  # chỉ dùng khi gọi thẳng API (curl/test) - UI không còn gửi field này

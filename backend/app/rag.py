@@ -1,10 +1,13 @@
+import asyncio
 import json
 from collections.abc import AsyncIterator
 
 from sqlalchemy.orm import Session
 
+from .config import get_settings
 from .embeddings import get_embedder
 from .llm import generate_answer_stream
+from .reranker import rerank_hits
 from .vector_store import get_vector_store
 
 
@@ -21,6 +24,7 @@ async def answer_question_stream(
     top_k: int,
     category: str | None,
     history: list[dict] | None = None,
+    use_rerank: bool = True,
 ) -> AsyncIterator[str]:
     """Retrieval -> Context Assembly -> Generation, phát theo Server-Sent Events (mục 6.2).
 
@@ -33,7 +37,17 @@ async def answer_question_stream(
     store = get_vector_store()
 
     query_vector = embedder.embed_query(question)
-    hits = store.search(query_vector, top_k=top_k, category=category)
+    if use_rerank:
+        # Lấy rộng rồi để reranker chọn lại; top_k lúc này là số đoạn TỐI ĐA gửi cho LLM
+        candidates = store.search(
+            query_vector, top_k=max(get_settings().rerank_candidates, top_k), category=category
+        )
+        if candidates:
+            yield _sse("status", {"stage": "reranking", "message": "⚖️ Đang chấm lại mức độ liên quan..."})
+        # chạy ở thread riêng để model (CPU nặng) không chặn event loop / các request khác
+        hits = await asyncio.to_thread(rerank_hits, question, candidates, top_k)
+    else:
+        hits = store.search(query_vector, top_k=top_k, category=category)
 
     if not hits:
         yield _sse("status", {"stage": "done", "message": "Không tìm thấy tài liệu liên quan"})
