@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from qdrant_client.http import models as qmodels
 from sqlalchemy.orm import Session
 
-from .. import models, schemas
+from .. import lexical_search, models, schemas
 from ..config import UPLOAD_DIR
 from ..db import get_db
 from ..embeddings import get_embedder
@@ -76,6 +76,7 @@ async def upload_document(
         vectors = embedder.embed_passages([c["content"] for c in chunks])
 
         points = []
+        lexical_rows = []
         for chunk, vector in zip(chunks, vectors):
             chunk_id = str(uuid.uuid4())
             db.add(
@@ -87,6 +88,14 @@ async def upload_document(
                     token_count=chunk["token_count"],
                     page_number=chunk["page_number"],
                 )
+            )
+            lexical_rows.append(
+                {
+                    "chunk_id": chunk_id,
+                    "document_id": doc_id,
+                    "category": category,
+                    "content": chunk["content"],
+                }
             )
             points.append(
                 qmodels.PointStruct(
@@ -109,6 +118,8 @@ async def upload_document(
         document.status = "COMPLETED"
         document.chunk_count = len(chunks)
         db.commit()
+        # Đánh chỉ mục từ khoá cho nhánh BM25 của tìm kiếm lai (xem lexical_search.py).
+        lexical_search.index_chunks(db, lexical_rows)
     except Exception as exc:  # noqa: BLE001
         document.status = "FAILED"
         document.error_message = str(exc)
@@ -131,6 +142,7 @@ def delete_document(document_id: str, db: Session = Depends(get_db)):
     if not document:
         raise HTTPException(404, "Không tìm thấy tài liệu.")
     get_vector_store().delete_document(document_id)
+    lexical_search.remove_document(db, document_id)
     Path(document.file_path).unlink(missing_ok=True)
     db.delete(document)
     db.commit()

@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
-from .. import schemas
+from .. import models, schemas
 from ..config import get_settings
 from ..db import get_db
 from ..rag import answer_question_stream
@@ -34,5 +34,18 @@ async def chat_completions(payload: schemas.ChatRequest, db: Session = Depends(g
         category=payload.category,
         history=[h.model_dump() for h in payload.history],
         use_rerank=payload.use_rerank,
+        session_id=payload.session_id,
     )
     return StreamingResponse(generator, media_type="text/event-stream")
+
+
+@router.post("/feedback")
+def submit_feedback(payload: schemas.FeedbackRequest, db: Session = Depends(get_db)):
+    """Chấm 👍/👎 cho một lượt trả lời. query_log_id lấy từ sự kiện SSE 'done'."""
+    row = db.get(models.QueryLog, payload.query_log_id)
+    if not row:
+        raise HTTPException(404, "Không tìm thấy lượt hỏi tương ứng.")
+    row.feedback = payload.rating
+    row.feedback_note = payload.note
+    db.commit()
+    return {"status": "ok"}

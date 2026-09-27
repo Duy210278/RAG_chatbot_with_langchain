@@ -27,6 +27,16 @@ def init_db() -> None:
 
     Base.metadata.create_all(bind=engine)
     _migrate_add_content_hash()
+    _init_lexical_index()
+
+
+def _init_lexical_index() -> None:
+    """Dựng chỉ mục từ khoá (FTS5) cho tìm kiếm lai. Nội dung chunk đã nằm sẵn trong SQLite
+    nên tài liệu nạp trước khi có tính năng này được đánh chỉ mục lại ngay, không cần nạp lại file."""
+    from . import lexical_search
+
+    if lexical_search.ensure_schema():
+        lexical_search.backfill_if_empty()
 
 
 def _migrate_add_content_hash() -> None:

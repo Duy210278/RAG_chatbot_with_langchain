@@ -33,7 +33,9 @@ def build_messages(history: list[dict], question: str, context_blocks: list[str]
     return messages
 
 
-async def _stream_anthropic(api_key: str, model: str, system: str, messages: list[dict]) -> AsyncIterator[str]:
+async def _stream_anthropic(
+    api_key: str, model: str, system: str, messages: list[dict], usage_sink: dict | None = None
+) -> AsyncIterator[str]:
     import anthropic
 
     client = anthropic.AsyncAnthropic(api_key=api_key)
@@ -45,28 +47,55 @@ async def _stream_anthropic(api_key: str, model: str, system: str, messages: lis
     ) as stream:
         async for text in stream.text_stream:
             yield text
+        if usage_sink is not None:
+            try:
+                usage = (await stream.get_final_message()).usage
+                usage_sink["prompt_tokens"] = usage.input_tokens
+                usage_sink["completion_tokens"] = usage.output_tokens
+            except Exception:  # noqa: BLE001 - đếm token hỏng không được làm hỏng câu trả lời đã stream xong
+                pass
 
 
 async def _stream_openai_compatible(
-    api_key: str, model: str, system: str, messages: list[dict], base_url: str | None = None
+    api_key: str,
+    model: str,
+    system: str,
+    messages: list[dict],
+    base_url: str | None = None,
+    usage_sink: dict | None = None,
 ) -> AsyncIterator[str]:
     """Dùng chung cho OpenAI và mọi provider tương thích chuẩn OpenAI Chat Completions
     (xAI Grok, Groq, DeepSeek, Mistral, Ollama/vLLM local...) - chỉ khác nhau ở base_url."""
     from openai import AsyncOpenAI
 
     client = AsyncOpenAI(api_key=api_key, base_url=base_url)
-    stream = await client.chat.completions.create(
-        model=model,
-        messages=[{"role": "system", "content": system}, *messages],
-        stream=True,
-    )
+    payload = {
+        "model": model,
+        "messages": [{"role": "system", "content": system}, *messages],
+        "stream": True,
+    }
+    try:
+        # include_usage: chunk CUỐI trả về số token thật (chunk đó không có choices).
+        stream = await client.chat.completions.create(**payload, stream_options={"include_usage": True})
+    except Exception:  # noqa: BLE001
+        # Không phải provider "tương thích OpenAI" nào cũng nhận stream_options. Lỗi xảy ra ngay
+        # lúc tạo stream, chưa phát token nào, nên gọi lại không kèm tham số này là an toàn.
+        stream = await client.chat.completions.create(**payload)
+
     async for chunk in stream:
+        if usage_sink is not None and getattr(chunk, "usage", None):
+            usage_sink["prompt_tokens"] = chunk.usage.prompt_tokens
+            usage_sink["completion_tokens"] = chunk.usage.completion_tokens
+        if not chunk.choices:  # chunk chỉ chứa usage
+            continue
         delta = chunk.choices[0].delta.content
         if delta:
             yield delta
 
 
-async def _stream_gemini(api_key: str, model: str, system: str, messages: list[dict]) -> AsyncIterator[str]:
+async def _stream_gemini(
+    api_key: str, model: str, system: str, messages: list[dict], usage_sink: dict | None = None
+) -> AsyncIterator[str]:
     from google import genai
     from google.genai import types
 
@@ -82,6 +111,10 @@ async def _stream_gemini(api_key: str, model: str, system: str, messages: list[d
         config=types.GenerateContentConfig(system_instruction=system),
     )
     async for chunk in stream:
+        meta = getattr(chunk, "usage_metadata", None)
+        if usage_sink is not None and meta:
+            usage_sink["prompt_tokens"] = getattr(meta, "prompt_token_count", None)
+            usage_sink["completion_tokens"] = getattr(meta, "candidates_token_count", None)
         if chunk.text:
             yield chunk.text
 
@@ -92,6 +125,44 @@ _BASE_URLS = {
 }
 
 
+def _resolve_model(provider: str, model: str | None) -> str:
+    if model:
+        return model
+    available = get_settings().models_for(provider)
+    if not available:
+        raise ValueError(f"Chưa cấu hình model nào cho provider '{provider}' (xem *_MODELS trong .env).")
+    return available[0]
+
+
+def _stream_for(
+    provider: str,
+    api_key: str,
+    model: str,
+    system: str,
+    messages: list[dict],
+    usage_sink: dict | None = None,
+) -> AsyncIterator[str]:
+    if provider == "anthropic":
+        return _stream_anthropic(api_key, model, system, messages, usage_sink)
+    if provider in ("openai", "xai", "groq"):
+        return _stream_openai_compatible(
+            api_key, model, system, messages, base_url=_BASE_URLS.get(provider), usage_sink=usage_sink
+        )
+    if provider == "gemini":
+        return _stream_gemini(api_key, model, system, messages, usage_sink)
+    raise ValueError(f"Provider không hợp lệ: {provider}")
+
+
+async def complete_text(provider: str, api_key: str, model: str | None, system: str, user: str) -> str:
+    """Gọi LLM lấy một câu trả lời ngắn, không streaming - dùng cho các bước phụ trợ nội bộ
+    (hiện tại: viết lại truy vấn). Tái dùng luôn các hàm stream sẵn có rồi ghép token lại,
+    để không phải viết thêm một nhánh gọi API riêng cho từng provider."""
+    parts: list[str] = []
+    async for token in _stream_for(provider, api_key, _resolve_model(provider, model), system, [{"role": "user", "content": user}]):
+        parts.append(token)
+    return "".join(parts)
+
+
 async def generate_answer_stream(
     provider: str,
     api_key: str,
@@ -99,6 +170,8 @@ async def generate_answer_stream(
     question: str,
     context_blocks: list[str],
     history: list[dict] | None = None,
+    usage_sink: dict | None = None,
+    prompt_sink: list[str] | None = None,
 ) -> AsyncIterator[str]:
     settings = get_settings()
     history = history or []
@@ -109,23 +182,10 @@ async def generate_answer_stream(
     if history and history[0]["role"] != "user":
         history = history[1:]
     messages = build_messages(history, question, context_blocks)
-
-    if not model:
-        available = settings.models_for(provider)
-        model = available[0] if available else None
-    if not model:
-        raise ValueError(f"Chưa cấu hình model nào cho provider '{provider}' (xem *_MODELS trong .env).")
-
-    if provider == "anthropic":
-        async for token in _stream_anthropic(api_key, model, SYSTEM_PROMPT, messages):
-            yield token
-    elif provider in ("openai", "xai", "groq"):
-        async for token in _stream_openai_compatible(
-            api_key, model, SYSTEM_PROMPT, messages, base_url=_BASE_URLS.get(provider)
-        ):
-            yield token
-    elif provider == "gemini":
-        async for token in _stream_gemini(api_key, model, SYSTEM_PROMPT, messages):
-            yield token
-    else:
-        raise ValueError(f"Provider không hợp lệ: {provider}")
+    if prompt_sink is not None:
+        # Để bên gọi ước lượng được số token đầu vào khi provider không trả số liệu thật.
+        prompt_sink.append(SYSTEM_PROMPT + "\n" + "\n".join(m["content"] for m in messages))
+    async for token in _stream_for(
+        provider, api_key, _resolve_model(provider, model), SYSTEM_PROMPT, messages, usage_sink
+    ):
+        yield token

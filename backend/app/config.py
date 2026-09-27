@@ -57,8 +57,22 @@ class Settings(BaseSettings):
     # Mặc định dùng model nhỏ đa ngôn ngữ (có tiếng Việt) vì chạy CPU: ~0.8s cho 20 đoạn.
     # BAAI/bge-reranker-v2-m3 chính xác hơn nhưng ~9s cho 20 đoạn trên CPU - chỉ nên dùng khi có GPU.
     reranker_model: str = "cross-encoder/mmarco-mMiniLMv2-L12-H384-v1"
-    rerank_candidates: int = 20  # số đoạn lấy từ vector search để đưa vào chấm lại
+    rerank_candidates: int = 30  # số đoạn lấy từ vector search để đưa vào chấm lại (đủ rộng cho quy trình nhiều bước)
     rerank_threshold: float = 0.3  # điểm liên quan tối thiểu (0-1) để 1 đoạn được gửi cho LLM
+
+    # --- Truy hồi lai: vector dense + từ khoá BM25 (SQLite FTS5), trộn bằng RRF ---
+    # Bù đúng điểm yếu của dense: truy vấn theo mã/số hiệu văn bản ("mẫu 01-HĐLĐ", "Điều 8").
+    use_hybrid_search: bool = True
+    lexical_candidates: int = 30  # số chunk lấy từ nhánh BM25 trước khi trộn
+    rrf_k: int = 60  # hằng số RRF (giá trị chuẩn trong tài liệu gốc; càng lớn càng san bằng thứ hạng)
+
+    # --- Viết lại câu hỏi nối tiếp thành câu hỏi độc lập trước khi truy hồi ---
+    # Chỉ chạy khi có lịch sử hội thoại, nên không ảnh hưởng câu hỏi đầu tiên của mỗi phiên.
+    query_rewrite_enabled: bool = True
+    query_rewrite_timeout: float = 8.0  # giây - quá hạn thì dùng câu hỏi gốc, không chặn lượt hỏi
+
+    # --- Quan sát / vận hành ---
+    log_level: str = "INFO"  # log JSON mỗi dòng ra stdout, xem logging_setup.py
 
     # --- Vector store ---
     qdrant_collection: str = "rag_chunks"
