@@ -79,6 +79,40 @@ Truy cập http://localhost:8501, vào Tab **📤 Nạp tài liệu** để uplo
 
 Lần chạy đầu tiên sẽ tải model embedding (~470MB) từ HuggingFace nên hơi chậm; các lần sau sẽ nhanh vì đã cache.
 
+### Câu hỏi gợi ý: FAQ + Hay được hỏi
+
+Cột bên phải Tab Hỏi đáp có hai nhóm, mỗi nhóm tối đa 5 câu (`SUGGESTION_LIMIT`); bấm một câu là gửi luôn cho chatbot.
+Dữ liệu lấy từ `GET /api/v1/chat/suggestions?category=...`.
+
+**🔥 Hay được hỏi** - tự sinh từ `query_logs`, không cần soạn. Một câu chỉ lên danh sách khi:
+
+- được hỏi ở ít nhất `POPULAR_MIN_SESSIONS` (mặc định 2) cuộc trò chuyện khác nhau trong `POPULAR_DAYS` (mặc định 30) ngày;
+- lần hỏi GẦN NHẤT được trả lời có trích dẫn, không trích dẫn hỏng, độ tin cậy không thấp, và chưa từng bị 👎;
+- chưa có trong FAQ. Câu hỏi nối tiếp được hiển thị bằng bản đã viết lại (đứng độc lập được).
+
+Lượt lỗi provider (hết quota, sai model...) bị bỏ qua. Lưu ý: danh sách hiển thị câu hỏi của người dùng này cho người
+dùng khác - ngưỡng nhiều cuộc trò chuyện giúp hạn chế lộ câu hỏi mang tính cá nhân, nhưng không thay được phân quyền thật.
+
+**💡 Câu hỏi thường gặp** - soạn tay trong [backend/faq.json](backend/faq.json), sửa file là có hiệu lực sau tối đa
+30 giây (không cần restart):
+
+```json
+[{"group": "Nhân sự & nội quy", "question": "Người lao động được nghỉ phép năm bao nhiêu ngày?", "category": "GENERAL"}]
+```
+
+- `group` (tuỳ chọn): tiêu đề nhóm trên UI.
+- `category` (tuỳ chọn): câu chỉ hiện khi "Phạm vi tài liệu" là `ALL` hoặc đúng loại này; bỏ trống = luôn hiện.
+- Chỉ nên đưa vào những câu mà tài liệu đã nạp thực sự trả lời được - câu FAQ ra "không tìm thấy" còn tệ hơn không có FAQ.
+  Nguồn gợi ý tốt: các lượt độ tin cậy cao / được 👍 ở Tab **📊 Giám sát**.
+
+### Khi LLM hết quota
+
+Provider trả lỗi hết quota/hết credit/vượt giới hạn gọi (HTTP 429, Gemini `RESOURCE_EXHAUSTED`, Anthropic
+"credit balance is too low"...) thì chatbot không chỉ báo lỗi: nó nói rõ provider/model nào hết quota, rồi trả nguyên
+văn `QUOTA_FALLBACK_RESULTS` (mặc định 3) đoạn tài liệu liên quan nhất đã tìm được, đánh số khớp danh sách nguồn.
+Qua API, nội dung này đến bằng sự kiện SSE `fallback` (`{"reason": "quota", "text": ...}`) thay cho `error`.
+Các lỗi khác (key sai, sai tên model...) vẫn báo lỗi như cũ.
+
 ## Kiểm thử nhanh bằng API (không cần UI)
 
 ```bash

@@ -71,6 +71,19 @@ class Settings(BaseSettings):
     query_rewrite_enabled: bool = True
     query_rewrite_timeout: float = 8.0  # giây - quá hạn thì dùng câu hỏi gốc, không chặn lượt hỏi
 
+    # --- Khi LLM hết quota: trả thẳng N đoạn tài liệu gốc đã tìm được thay vì chỉ báo lỗi ---
+    quota_fallback_results: int = 3
+
+    # --- Câu hỏi gợi ý (cột bên phải khung chat): FAQ soạn tay + "Hay được hỏi" từ query_logs ---
+    # faq.json: danh sách {"question", "group"?, "category"?}. Đọc lại mỗi lần gọi API nên sửa file
+    # là có hiệu lực ngay, không cần restart. Nằm ngoài data/ để được commit cùng mã nguồn.
+    faq_path: str = str(BASE_DIR / "backend" / "faq.json")
+    suggestion_limit: int = 5  # số câu hiển thị cho MỖI nhóm (FAQ / Hay được hỏi)
+    popular_days: int = 30  # chỉ xét lượt hỏi gần đây để danh sách bám theo tài liệu hiện có
+    # Phải được hỏi ở ít nhất N cuộc trò chuyện khác nhau: lọc kiểu hỏi đi hỏi lại trong một cuộc, và
+    # tránh đưa câu hỏi mang tính cá nhân của MỘT người ra cho mọi người cùng thấy.
+    popular_min_sessions: int = 2
+
     # --- Quan sát / vận hành ---
     log_level: str = "INFO"  # log JSON mỗi dòng ra stdout, xem logging_setup.py
 

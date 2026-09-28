@@ -6,6 +6,7 @@ from .. import models, schemas
 from ..config import get_settings
 from ..db import get_db
 from ..rag import answer_question_stream
+from ..suggestions import load_faq, normalize_question, popular_questions
 
 router = APIRouter(prefix="/api/v1/chat", tags=["chat"])
 
@@ -37,6 +38,20 @@ async def chat_completions(payload: schemas.ChatRequest, db: Session = Depends(g
         session_id=payload.session_id,
     )
     return StreamingResponse(generator, media_type="text/event-stream")
+
+
+@router.get("/suggestions", response_model=schemas.SuggestionsResponse)
+def suggestions(category: str | None = None, db: Session = Depends(get_db)):
+    """Câu hỏi gợi ý cho cột bên phải khung chat: FAQ soạn tay + câu hay được hỏi (xem suggestions.py).
+    Câu đã có trong FAQ không lặp lại ở "Hay được hỏi"."""
+    limit = get_settings().suggestion_limit
+    faq, faq_error = [], None
+    try:
+        faq = load_faq(category)[:limit]
+    except ValueError as exc:
+        faq_error = f"File FAQ không hợp lệ: {exc}"
+    popular = popular_questions(db, category, exclude={normalize_question(f.question) for f in faq}, limit=limit)
+    return schemas.SuggestionsResponse(faq=faq, faq_error=faq_error, popular=popular)
 
 
 @router.post("/feedback")

@@ -124,6 +124,26 @@ _BASE_URLS = {
     "groq": "https://api.groq.com/openai/v1",
 }
 
+# Dấu hiệu hết quota/hết tiền nằm trong nội dung lỗi - cho các trường hợp không trả HTTP 429.
+_QUOTA_MARKERS = ("insufficient_quota", "billing_not_active", "resource_exhausted", "credit balance is too low")
+
+
+def is_quota_error(exc: Exception) -> bool:
+    """Lỗi do hết quota / hết credit / vượt giới hạn số lượt gọi - khác với key sai, sai tên model...
+
+    Nhận diện qua thuộc tính chung thay vì import lớp lỗi của từng SDK:
+      - OpenAI, xAI, Groq (cùng SDK openai) và Anthropic: exc.status_code == 429
+      - Gemini (google-genai): exc.code == 429, exc.status == "RESOURCE_EXHAUSTED"
+      - Anthropic hết credit lại trả 400 "credit balance is too low" - chỉ bắt được qua nội dung lỗi.
+    """
+    status = getattr(exc, "status_code", None)
+    if status is None and isinstance(getattr(exc, "code", None), int):  # openai dùng .code cho mã lỗi dạng chuỗi
+        status = exc.code
+    if status == 429:
+        return True
+    text = f"{getattr(exc, 'status', '')} {getattr(exc, 'code', '')} {exc}".lower()
+    return any(marker in text for marker in _QUOTA_MARKERS)
+
 
 def _resolve_model(provider: str, model: str | None) -> str:
     if model:

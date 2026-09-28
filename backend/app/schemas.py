@@ -127,3 +127,20 @@ class ProviderInfo(BaseModel):
 
 class ProvidersResponse(BaseModel):
     providers: list[ProviderInfo]
+
+
+class FaqItem(BaseModel):
+    question: str = Field(min_length=1)
+    group: str | None = None  # tiêu đề nhóm hiển thị trên UI
+    category: str | None = None  # None = hiện ở mọi phạm vi tài liệu
+
+
+class PopularQuestion(BaseModel):
+    question: str
+    asked_in_sessions: int  # số cuộc trò chuyện khác nhau đã hỏi câu này
+
+
+class SuggestionsResponse(BaseModel):
+    faq: list[FaqItem]
+    faq_error: str | None = None  # faq.json hỏng - vẫn trả "Hay được hỏi" thay vì hỏng cả endpoint
+    popular: list[PopularQuestion]

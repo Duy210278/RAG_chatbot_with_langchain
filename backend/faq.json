@@ -1,0 +1,27 @@
+[
+  {
+    "group": "Nhân sự & nội quy",
+    "question": "Thời hạn nộp hồ sơ nhân sự và mở tài khoản ngân hàng là bao lâu?",
+    "category": "GENERAL"
+  },
+  {
+    "group": "Lương & Chế độ phúc lợi",
+    "question": "Ngày chi trả lương hàng tháng là ngày nào?",
+    "category": "GENERAL"
+  },
+  {
+    "group": "Lương & Chế độ phúc lợi",
+    "question": "Tại sao nhân viên thử việc lại bị trừ 10% thuế TNCN?",
+    "category": "GENERAL"
+  },
+  {
+    "group": "Nghỉ phép & Chế độ BHXH",
+    "question": "Người lao động được nghỉ phép năm bao nhiêu ngày?",
+    "category": "GENERAL"
+  },
+  {
+    "group": "Thủ tục hành chính & Nghỉ việc",
+    "question": "Quy định về thời hạn báo trước khi muốn nghỉ việc là bao lâu?",
+    "category": "GENERAL"
+  }
+]
