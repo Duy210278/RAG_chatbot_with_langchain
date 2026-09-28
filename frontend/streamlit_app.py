@@ -226,7 +226,14 @@ def render_details(quality: dict | None, citations: list[dict]) -> None:
             mark = "✅" if c.get("used") else "▫️"
             score_label = _SCORE_LABEL.get(c.get("score_type", ""), "điểm")
             page = c.get("page_number") or "—"
-            st.markdown(f"{mark} **[{c.get('index', '?')}] {c['title']}** — trang {page} ({score_label}: {c['score']})")
+            neighbors = c.get("neighbor_pages") or []
+            extra = ""
+            if neighbors:  # LLM đã đọc thêm các đoạn liền kề của nguồn này
+                pages = sorted({p for p in neighbors if p})
+                extra = f" · kèm {len(neighbors)} đoạn liền kề" + (f" (trang {', '.join(map(str, pages))})" if pages else "")
+            st.markdown(
+                f"{mark} **[{c.get('index', '?')}] {c['title']}** — trang {page}{extra} ({score_label}: {c['score']})"
+            )
             st.caption(c["snippet"])
         if rewritten or tech:
             if citations:

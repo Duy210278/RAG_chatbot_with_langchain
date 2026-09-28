@@ -111,6 +111,7 @@ class Citation(BaseModel):
     document_id: str
     title: str
     page_number: int | None = None
+    neighbor_pages: list[int | None] = []  # trang của các đoạn liền kề được gửi kèm cho LLM
     score: float
     score_type: str = "rerank"  # rerank (0-1) | hybrid_rrf | cosine - ba thang điểm KHÔNG so sánh được với nhau
     sources: list[str] = []  # nhánh tìm ra đoạn này: dense và/hoặc lexical

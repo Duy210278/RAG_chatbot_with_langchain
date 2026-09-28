@@ -10,7 +10,7 @@ from .llm import generate_answer_stream, is_quota_error
 from .observability import StageTimer, persist_turn, record_query, resolve_usage
 from .query_rewrite import rewrite_for_retrieval
 from .reranker import rerank_hits
-from .retrieval import retrieve
+from .retrieval import expand_with_neighbors, retrieve
 
 # Câu trả lời cố định khi không truy hồi được gì - dùng lại ở nhiều chỗ nên đặt thành hằng.
 NO_CONTEXT_ANSWER = "Không tìm thấy tài liệu liên quan trong hệ thống để trả lời câu hỏi này."
@@ -141,13 +141,18 @@ async def answer_question_stream(
     score_type = "rerank" if use_rerank else ("hybrid_rrf" if hybrid_used else "cosine")
     top_score = max(h.score for h in hits)
 
-    context_blocks = [hit.payload["content"] for hit in hits]
+    with timer.stage("expand"):
+        hits = expand_with_neighbors(db, hits, settings.neighbor_top_n, settings.neighbor_window)
+
+    # LLM đọc bản đã ghép đoạn liền kề (nếu có); trích dẫn/snippet vẫn trỏ đúng đoạn đã khớp.
+    context_blocks = [hit.payload.get("context") or hit.payload["content"] for hit in hits]
     citations = [
         {
             "index": i + 1,  # khớp với ký hiệu [n] mà LLM được yêu cầu trích dẫn
             "document_id": hit.payload["document_id"],
             "title": hit.payload.get("title", "Không rõ"),
             "page_number": hit.payload.get("page_number"),
+            "neighbor_pages": hit.payload.get("neighbor_pages", []),
             "score": round(hit.score, 4),
             "score_type": score_type,
             "sources": hit.sources,

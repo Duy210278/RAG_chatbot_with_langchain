@@ -66,6 +66,11 @@ class Settings(BaseSettings):
     lexical_candidates: int = 30  # số chunk lấy từ nhánh BM25 trước khi trộn
     rrf_k: int = 60  # hằng số RRF (giá trị chuẩn trong tài liệu gốc; càng lớn càng san bằng thứ hạng)
 
+    # --- Gửi kèm đoạn liền kề (chunk_index ± N, cùng tài liệu) cho các đoạn đứng đầu ---
+    # Bù slide bị vụn và điều khoản bị cắt đôi ở ranh giới trang, không cần nạp lại tài liệu.
+    neighbor_window: int = 1  # số đoạn lấy thêm MỖI phía; 0 = tắt
+    neighbor_top_n: int = 3  # chỉ mở rộng N đoạn đứng đầu, để prompt không phình theo top_k
+
     # --- Viết lại câu hỏi nối tiếp thành câu hỏi độc lập trước khi truy hồi ---
     # Chỉ chạy khi có lịch sử hội thoại, nên không ảnh hưởng câu hỏi đầu tiên của mỗi phiên.
     query_rewrite_enabled: bool = True

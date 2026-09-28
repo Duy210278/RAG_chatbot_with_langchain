@@ -12,6 +12,7 @@ BM25 (số âm, không giới hạn) không cùng thang, chuẩn hoá lại luô
 import asyncio
 
 from pydantic import BaseModel
+from sqlalchemy import and_, or_
 from sqlalchemy.orm import Session
 
 from . import lexical_search, models
@@ -130,3 +131,91 @@ async def retrieve(
         return dense[:limit], False
 
     return rrf_fuse(dense, lexical, settings.rrf_k, limit), True
+
+
+_MIN_OVERLAP_CHARS = 10
+
+
+def _join_chunks(a: str, b: str, same_page: bool) -> str:
+    """Nối hai đoạn liền nhau, bỏ phần chồng lấn (chunk_overlap) nếu có.
+
+    Chỉ đoạn CÙNG TRANG mới có chồng lấn (mỗi trang được cắt riêng), nên chỉ tìm chồng lấn khi cùng
+    trang - khác trang mà tình cờ trùng chữ (vd tiêu đề slide lặp lại) thì vẫn giữ nguyên cả hai.
+    Tìm phần cuối DÀI NHẤT của a trùng phần đầu của b: duyệt vị trí xuất hiện của vài ký tự đầu b
+    từ trái sang, vị trí đầu tiên khớp trọn chính là phần chồng lấn dài nhất."""
+    probe = b[:_MIN_OVERLAP_CHARS]
+    start = a.find(probe) if same_page and len(probe) == _MIN_OVERLAP_CHARS else -1
+    while start != -1:
+        if b.startswith(a[start:]):
+            return a + b[len(a) - start :]
+        start = a.find(probe, start + 1)
+    return f"{a}\n\n{b}"
+
+
+def expand_with_neighbors(db: Session, hits: list[Hit], top_n: int, window: int) -> list[Hit]:
+    """Gửi kèm các đoạn liền trước/liền sau (chunk_index ± window, cùng tài liệu) cho top_n đoạn đứng đầu.
+
+    Bù hai điểm yếu của cách cắt hiện tại mà không phải nạp lại tài liệu: slide bị vụn (một ý trải
+    trên vài slide liên tiếp) và điều khoản bị cắt đôi ở ranh giới trang (chunk không vượt qua trang).
+
+    Phần ghép nằm ở payload["context"], CHỈ dùng làm ngữ cảnh cho LLM; payload["content"] vẫn là đúng
+    đoạn đã khớp nên trích dẫn/snippet không lệch. Rerank đã chấm trên đoạn gốc từ trước - điểm và thứ
+    hạng giữ nguyên. Đoạn liền kề đã là một nguồn riêng, hoặc đã được ghép cho đoạn xếp trên, thì bỏ qua
+    để cùng một nội dung không bị gửi hai lần.
+    """
+    if top_n <= 0 or window <= 0:
+        return hits
+
+    def key(hit: Hit) -> tuple:
+        return hit.payload.get("document_id"), hit.payload.get("chunk_index")
+
+    wanted: dict[str, set[int]] = {}
+    for hit in hits[:top_n]:
+        doc_id, idx = key(hit)
+        if doc_id is not None and idx is not None:
+            wanted.setdefault(doc_id, set()).update(idx + o for o in range(-window, window + 1) if o)
+    if not wanted:
+        return hits
+
+    chunk = models.DocumentChunk
+    rows = (
+        db.query(chunk.document_id, chunk.chunk_index, chunk.content, chunk.page_number)
+        .filter(or_(*(and_(chunk.document_id == d, chunk.chunk_index.in_(idx)) for d, idx in wanted.items())))
+        .all()
+    )
+    by_key = {(r.document_id, r.chunk_index): r for r in rows}
+    taken = {key(h) for h in hits}
+
+    def grab(doc_id: str, idx: int, step: int) -> list:
+        """Lấy liên tiếp theo một hướng, dừng ở đoạn đầu tiên không lấy được để phần ghép luôn liền mạch."""
+        out = []
+        for n in range(1, window + 1):
+            k = (doc_id, idx + step * n)
+            if k in taken or k not in by_key:
+                break
+            taken.add(k)
+            out.append(by_key[k])
+        return out
+
+    expanded: list[Hit] = []
+    for rank, hit in enumerate(hits):
+        doc_id, idx = key(hit)
+        if rank >= top_n or doc_id is None or idx is None:
+            expanded.append(hit)
+            continue
+        before = grab(doc_id, idx, -1)[::-1]
+        after = grab(doc_id, idx, 1)
+        if not before and not after:
+            expanded.append(hit)
+            continue
+        parts = (
+            [(r.content, r.page_number) for r in before]
+            + [(hit.payload["content"], hit.payload.get("page_number"))]
+            + [(r.content, r.page_number) for r in after]
+        )
+        context = parts[0][0]
+        for (_, prev_page), (text, page) in zip(parts, parts[1:]):
+            context = _join_chunks(context, text, same_page=page == prev_page)
+        payload = {**hit.payload, "context": context, "neighbor_pages": [r.page_number for r in before + after]}
+        expanded.append(hit.model_copy(update={"payload": payload}))
+    return expanded
