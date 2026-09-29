@@ -90,7 +90,12 @@ class Settings(BaseSettings):
     popular_min_sessions: int = 2
 
     # --- Quan sát / vận hành ---
-    log_level: str = "INFO"  # log JSON mỗi dòng ra stdout, xem logging_setup.py
+    log_level: str = "INFO"
+    log_format: str = "pretty"  # pretty = dễ đọc trên terminal khi dev; json = cho Loki/ELK khi chạy thật
+    log_quiet_access: bool = True  # ẩn access log của GET thành công (UI gọi lại liên tục mỗi lần tải lại)
+    # Gửi kèm prompt đầy đủ (system + lịch sử + ngữ cảnh) về UI và lưu cùng lượt hội thoại - để kiểm tra
+    # LLM thực sự được đọc gì. Tắt khi không muốn người dùng cuối thấy system prompt.
+    expose_prompt: bool = True
 
     # --- Vector store ---
     qdrant_collection: str = "rag_chunks"

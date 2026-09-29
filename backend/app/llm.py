@@ -191,7 +191,7 @@ async def generate_answer_stream(
     context_blocks: list[str],
     history: list[dict] | None = None,
     usage_sink: dict | None = None,
-    prompt_sink: list[str] | None = None,
+    prompt_sink: list[dict] | None = None,
 ) -> AsyncIterator[str]:
     settings = get_settings()
     history = history or []
@@ -202,10 +202,17 @@ async def generate_answer_stream(
     if history and history[0]["role"] != "user":
         history = history[1:]
     messages = build_messages(history, question, context_blocks)
+    resolved_model = _resolve_model(provider, model)
     if prompt_sink is not None:
-        # Để bên gọi ước lượng được số token đầu vào khi provider không trả số liệu thật.
-        prompt_sink.append(SYSTEM_PROMPT + "\n" + "\n".join(m["content"] for m in messages))
-    async for token in _stream_for(
-        provider, api_key, _resolve_model(provider, model), SYSTEM_PROMPT, messages, usage_sink
-    ):
+        # Đúng những gì gửi đi (sau khi đã cắt lịch sử): để UI hiển thị prompt, và để bên gọi
+        # ước lượng token đầu vào khi provider không trả số liệu thật (xem flatten_prompt).
+        prompt_sink.append({"model": resolved_model, "system": SYSTEM_PROMPT, "messages": messages})
+    async for token in _stream_for(provider, api_key, resolved_model, SYSTEM_PROMPT, messages, usage_sink):
         yield token
+
+
+def flatten_prompt(prompt: dict | None) -> str:
+    """Toàn bộ prompt thành một chuỗi - dùng để ước lượng số token đầu vào."""
+    if not prompt:
+        return ""
+    return prompt["system"] + "\n" + "\n".join(m["content"] for m in prompt["messages"])

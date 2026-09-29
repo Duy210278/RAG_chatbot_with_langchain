@@ -79,6 +79,17 @@ Truy cập http://localhost:8501, vào Tab **📤 Nạp tài liệu** để uplo
 
 Lần chạy đầu tiên sẽ tải model embedding (~470MB) từ HuggingFace nên hơi chậm; các lần sau sẽ nhanh vì đã cache.
 
+**Log backend** mặc định dạng dễ đọc (`LOG_FORMAT=pretty`), mỗi lượt hỏi một dòng:
+
+```
+09:31:10 INFO  query    gemini/gemini-3.6-flash · 69.7s (rewrite 3.7s, rerank 0.9s, generate 65.1s) · 6 đoạn · tin cậy cao · 2760+172 tok · "tìm nhân sự phụ trách lương"
+```
+
+Lượt lỗi (hết quota, sai model...) in ở mức WARNING. Access log của các GET thành công bị ẩn (`LOG_QUIET_ACCESS`) vì
+Streamlit gọi lại chúng mỗi lần tải lại trang. Khi triển khai thật, đặt `LOG_FORMAT=json` để đẩy vào Loki/ELK.
+Riêng vài dòng `WatchFiles detected changes...` của tiến trình `--reload` vẫn theo định dạng của uvicorn, vì tiến trình
+đó không import app.
+
 ### Câu hỏi gợi ý: FAQ + Hay được hỏi
 
 Cột bên phải Tab Hỏi đáp có hai nhóm, mỗi nhóm tối đa 5 câu (`SUGGESTION_LIMIT`); bấm một câu là gửi luôn cho chatbot.

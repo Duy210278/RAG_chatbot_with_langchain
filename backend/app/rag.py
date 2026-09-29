@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 
 from . import answer_check
 from .config import PROVIDER_LABELS, get_settings
-from .llm import generate_answer_stream, is_quota_error
+from .llm import flatten_prompt, generate_answer_stream, is_quota_error
 from .observability import StageTimer, persist_turn, record_query, resolve_usage
 from .query_rewrite import rewrite_for_retrieval
 from .reranker import rerank_hits
@@ -21,6 +21,14 @@ _FALLBACK_EXCERPT_CHARS = 700
 
 def _sse(event: str, data: dict) -> str:
     return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
+
+
+def _exposed_prompt(prompt_sink: list[dict]) -> dict:
+    """Prompt đã gửi cho LLM, kèm vào quality để UI hiển thị (và được lưu cùng lượt hội thoại).
+    Tắt bằng EXPOSE_PROMPT=false khi không muốn người dùng cuối thấy system prompt."""
+    if not get_settings().expose_prompt or not prompt_sink:
+        return {}
+    return {"prompt": prompt_sink[0]}
 
 
 def _excerpt(text: str, limit: int = _FALLBACK_EXCERPT_CHARS) -> str:
@@ -172,7 +180,7 @@ async def answer_question_stream(
 
     answer_parts: list[str] = []
     usage_sink: dict = {}
-    prompt_sink: list[str] = []
+    prompt_sink: list[dict] = []
     first_token_ms: int | None = None
     try:
         with timer.stage("generate"):
@@ -222,6 +230,7 @@ async def answer_question_stream(
             "hybrid": hybrid_used,
             "latency_ms": timer.stages,
             "total_ms": timer.total_ms,
+            **_exposed_prompt(prompt_sink),  # prompt đã gửi (dù LLM từ chối vì hết quota)
         }
         persist_turn(session_id, question, answer, citations, quality, log_id)
         yield _sse("fallback", {"reason": "quota", "text": answer})
@@ -237,7 +246,7 @@ async def answer_question_stream(
     for citation in citations:
         citation["used"] = citation["index"] in used
     confidence = answer_check.estimate_confidence(hits, used, invalid, use_rerank, settings.rerank_threshold)
-    usage = resolve_usage(usage_sink, prompt_sink[0] if prompt_sink else "", answer)
+    usage = resolve_usage(usage_sink, flatten_prompt(prompt_sink[0] if prompt_sink else None), answer)
 
     quality = {
         "confidence": confidence["level"],
@@ -249,6 +258,7 @@ async def answer_question_stream(
         "first_token_ms": first_token_ms,
         "total_ms": timer.total_ms,
         "tokens": usage,
+        **_exposed_prompt(prompt_sink),
     }
 
     log_id = record_query(
