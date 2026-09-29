@@ -1,7 +1,12 @@
 {
   "permissions": {
     "allow": [
-      "Bash(python3 -m py_compile backend/app/*.py backend/app/routers/*.py frontend/streamlit_app.py)"
+      "Bash(python3 -m py_compile backend/app/*.py backend/app/routers/*.py frontend/streamlit_app.py)",
+      "Bash(curl -s -m 2 localhost:8011/health)",
+      "Bash(break)",
+      "Bash(curl -s localhost:8011/health)",
+      "Bash(curl -s localhost:8011/api/v1/documents)",
+      "Bash(python3 -c \"import sys,json;[print\\(d['id'][:8], d['title']\\) for d in json.load\\(sys.stdin\\)]\")"
     ]
   }
 }
