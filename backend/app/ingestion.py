@@ -20,7 +20,7 @@ trong routers/documents.py.
 
 import io
 
-import fitz  # PyMuPDF
+import pymupdf  # tên import mới của PyMuPDF - "import fitz" in cảnh báo deprecated mỗi lần khởi động
 import tiktoken
 from docx import Document as DocxDocument
 from langchain_text_splitters import MarkdownHeaderTextSplitter, RecursiveCharacterTextSplitter
@@ -72,7 +72,7 @@ def _chunk_pages(pages: list[tuple[int | None, str]]) -> list[dict]:
 # ---------------------------------------------------------------------------
 def extract_pdf_pages(file_path: str) -> list[tuple[int, str]]:
     """Trả về danh sách (số trang, nội dung text), số trang bắt đầu từ 1."""
-    doc = fitz.open(file_path)
+    doc = pymupdf.open(file_path)
     pages: list[tuple[int, str]] = []
     for i, page in enumerate(doc, start=1):
         text = page.get_text("text").strip()
@@ -96,7 +96,7 @@ def extract_pdf_pages_ocr(file_path: str, lang: str = "vie+eng") -> list[tuple[i
     """OCR từng trang PDF scan bằng Tesseract. Render trang thành ảnh độ phân giải cao rồi OCR."""
     from PIL import Image
 
-    doc = fitz.open(file_path)
+    doc = pymupdf.open(file_path)
     pages: list[tuple[int, str]] = []
     for i, page in enumerate(doc, start=1):
         pix = page.get_pixmap(dpi=250)

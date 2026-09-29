@@ -12,9 +12,16 @@ from .routers import admin, chat, config, documents, sessions
 from .vector_store import get_vector_store
 
 
+settings = get_settings()
+
+# Cấu hình log ngay lúc import app chứ không đợi tới lifespan: uvicorn import app TRƯỚC khi in
+# "Started server process"/"Waiting for application startup", nên mọi dòng từ đây trở đi đều cùng
+# một định dạng (trước đây các dòng đó vẫn theo định dạng mặc định của uvicorn, lẫn với JSON).
+setup_logging(settings.log_level, settings.log_format, settings.log_quiet_access)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    setup_logging(get_settings().log_level)
     logger = get_logger("rag.startup")
     init_db()
     get_embedder()  # tải model embedding trước để request đầu tiên không bị chậm
@@ -23,8 +30,6 @@ async def lifespan(app: FastAPI):
     logger.info("Backend sẵn sàng", extra={"embedding_model": get_settings().embedding_model})
     yield
 
-
-settings = get_settings()
 
 app = FastAPI(title="RAG Chatbot v2 - MVP", lifespan=lifespan)
 

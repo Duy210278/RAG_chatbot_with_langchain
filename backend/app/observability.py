@@ -75,6 +75,27 @@ def resolve_usage(usage: dict | None, prompt_text: str, answer_text: str) -> dic
     }
 
 
+def _summary(fields: dict, latency: dict) -> str:
+    """Một dòng cho người đọc terminal (định dạng pretty) - bản JSON vẫn giữ đủ từng trường riêng."""
+    parts = [f"{fields.get('provider')}/{fields.get('model') or 'mặc định'}"]
+    # Bỏ các khâu gần như tức thì (<50ms) - chỉ làm dài dòng mà không nói lên điều gì.
+    stages = ", ".join(f"{name} {ms / 1000:.1f}s" for name, ms in latency.items() if ms >= 50)
+    parts.append(f"{(fields.get('total_ms') or 0) / 1000:.1f}s" + (f" ({stages})" if stages else ""))
+    if fields.get("error"):
+        parts.append("LỖI " + " ".join(str(fields["error"]).split())[:120])
+    else:
+        parts.append(f"{fields.get('n_hits', 0)} đoạn")
+        if fields.get("no_answer"):
+            parts.append("không trả lời được")
+        if fields.get("confidence"):
+            parts.append(f"tin cậy {fields['confidence']}")
+        if fields.get("prompt_tokens") is not None:
+            parts.append(f"{fields['prompt_tokens']}+{fields.get('completion_tokens') or 0} tok")
+    question = " ".join((fields.get("question") or "").split())
+    parts.append(f'"{question[:80]}{"…" if len(question) > 80 else ""}"')
+    return " · ".join(parts)
+
+
 def record_query(**fields) -> str | None:
     """Ghi một dòng query_logs + một dòng log JSON. Trả về id để UI gắn phản hồi 👍/👎.
 
@@ -98,9 +119,12 @@ def record_query(**fields) -> str | None:
         logger.warning("Không ghi được query_log", exc_info=True)
         return None
 
-    logger.info(
+    # Lượt lỗi (hết quota, sai model...) in ở mức WARNING để nổi bật giữa các lượt bình thường.
+    log = logger.warning if fields.get("error") else logger.info
+    log(
         "query",
         extra={
+            "pretty": _summary(fields, latency),
             "query_log_id": log_id,
             "session_id": fields.get("session_id"),
             "provider": fields.get("provider"),

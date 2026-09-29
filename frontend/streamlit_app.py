@@ -60,15 +60,75 @@ _STATUS_LABEL = {
     "FAILED": "❌ Lỗi",
 }
 
-# CSS tối thiểu, chỉ nhắm vào container có `key` (Streamlit gắn lớp .st-key-<key> - cách tuỳ biến
-# được hỗ trợ chính thức) thay vì class nội bộ dễ đổi tên giữa các phiên bản.
+# CSS tối thiểu, chỉ nhắm vào widget/container có `key` (Streamlit gắn lớp .st-key-<key> - cách tuỳ
+# biến được hỗ trợ chính thức) thay vì class nội bộ dễ đổi tên giữa các phiên bản. Căn trái phải đặt
+# ở CẢ nút lẫn khối chữ bên trong (kèm !important): Streamlit căn giữa ở khối chữ, nên chỉ đặt trên
+# <button> thì không có tác dụng.
 _CSS = """
 <style>
-/* Lịch sử trò chuyện + câu hỏi gợi ý là DANH SÁCH, nên căn trái thay vì căn giữa như nút bấm */
-.st-key-sessions button, .st-key-suggestions button { justify-content: flex-start; text-align: left; }
-/* Câu hỏi gợi ý hiện đủ nội dung (xuống dòng) thay vì bị cắt "…" giữa chừng */
-.st-key-suggestions button div, .st-key-suggestions button p {
-    white-space: normal; overflow: visible; text-overflow: clip; text-align: left;
+/* ---- Lịch sử trò chuyện: danh sách căn trái, mỗi mục một dòng (dài quá thì "…") ---- */
+[class*="st-key-open_"] button {
+    justify-content: flex-start !important;
+    text-align: left !important;
+    padding: 0.4rem 0.75rem !important;
+    border-radius: 0.5rem !important;
+}
+[class*="st-key-open_"] button > div,
+[class*="st-key-open_"] button [data-testid="stMarkdownContainer"] {
+    width: 100%;
+    min-width: 0;
+    justify-content: flex-start !important;
+    text-align: left !important;
+}
+[class*="st-key-open_"] button p {
+    text-align: left !important;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+[class*="st-key-open_"] button:hover { background: rgba(128, 128, 128, 0.12) !important; }
+
+/* ---- Cuộc trò chuyện đang mở: nền nhạt + vạch màu bên trái + chữ đậm ---- */
+[class*="st-key-open_active_"] button {
+    background: rgba(255, 75, 75, 0.12) !important;
+    border: none !important;
+    border-left: 3px solid #ff4b4b !important;
+}
+[class*="st-key-open_active_"] button:hover { background: rgba(255, 75, 75, 0.18) !important; }
+[class*="st-key-open_active_"] button p { font-weight: 600; }
+
+/* ---- Câu hỏi gợi ý: căn trái, hiện đủ nội dung (xuống dòng) thay vì bị cắt "…" ---- */
+[class*="st-key-faq_"] button, [class*="st-key-pop_"] button {
+    justify-content: flex-start !important;
+    text-align: left !important;
+}
+[class*="st-key-faq_"] button > div, [class*="st-key-pop_"] button > div,
+[class*="st-key-faq_"] button [data-testid="stMarkdownContainer"],
+[class*="st-key-pop_"] button [data-testid="stMarkdownContainer"] {
+    width: 100%;
+    justify-content: flex-start !important;
+    text-align: left !important;
+}
+[class*="st-key-faq_"] button p, [class*="st-key-pop_"] button p {
+    text-align: left !important;
+    white-space: normal !important;
+    overflow: visible !important;
+    text-overflow: clip !important;
+}
+
+/* ---- Cột gợi ý (FAQ + Hay được hỏi) đứng yên khi cuộn khung chat ----
+   Sticky đặt trên CỘT chứa khung gợi ý (tìm bằng :has), không đặt trên khung bên trong: cột là phần tử
+   của hàng flex cao bằng khung chat nên còn chỗ để "trượt" theo. Chỉ bật khi 2 cột nằm cạnh nhau -
+   màn hình hẹp Streamlit xếp chồng 2 cột, sticky lúc đó sẽ đè lên khung chat. */
+@media (min-width: 640px) {
+    [data-testid="stColumn"]:has(.st-key-suggestions),
+    [data-testid="column"]:has(.st-key-suggestions) {
+        position: sticky;
+        top: 4.5rem;                      /* chừa chỗ cho thanh điều hướng phía trên */
+        align-self: flex-start;           /* không kéo giãn theo chiều cao cột chat */
+        max-height: calc(100vh - 10rem);  /* chừa cả ô nhập câu hỏi ghim ở đáy màn hình */
+        overflow-y: auto;                 /* danh sách dài hơn màn hình thì cuộn bên trong cột */
+    }
 }
 </style>
 """
@@ -244,6 +304,28 @@ def render_details(quality: dict | None, citations: list[dict]) -> None:
                 st.caption(f"⏱️ {tech}")
 
 
+def render_prompt(quality: dict | None) -> None:
+    """Prompt đúng như đã gửi cho LLM - khi câu trả lời sai, xem ở đây để biết LLM thực sự được đọc gì
+    (thiếu đoạn đúng là lỗi truy hồi; có đoạn đúng mà vẫn sai là lỗi của LLM/prompt)."""
+    prompt = (quality or {}).get("prompt")
+    if not prompt:
+        return
+    messages = prompt.get("messages") or []
+    tokens = (quality.get("tokens") or {}).get("prompt_tokens")
+    approx = "~" if (quality.get("tokens") or {}).get("tokens_estimated") else ""
+    label = f"Prompt gửi cho LLM · {len(messages)} tin nhắn" + (f" · {approx}{tokens:,} token" if tokens else "")
+
+    blocks = [f"━━ SYSTEM ━━\n{prompt.get('system', '')}"]
+    for i, m in enumerate(messages):
+        # Tin nhắn cuối là câu hỏi hiện tại đã ghép ngữ cảnh RAG; các tin trước là lịch sử hội thoại.
+        note = " (câu hỏi hiện tại + ngữ cảnh)" if i == len(messages) - 1 else " (lịch sử)"
+        blocks.append(f"━━ {m['role'].upper()}{note} ━━\n{m['content']}")
+    with st.expander(label, icon=":material/terminal:"):
+        if prompt.get("model"):
+            st.caption(f"Model: {prompt['model']}")
+        st.code("\n\n".join(blocks), language=None, wrap_lines=True, height=400)
+
+
 def render_message(msg: dict) -> None:
     if msg["role"] == "user":
         with st.chat_message("user", avatar=USER_AVATAR):
@@ -252,6 +334,7 @@ def render_message(msg: dict) -> None:
     with st.chat_message("assistant", avatar=BOT_AVATAR):
         render_answer(msg["content"], msg.get("quality"))
         render_details(msg.get("quality"), msg.get("citations") or [])
+        render_prompt(msg.get("quality"))
         render_feedback(msg.get("query_log_id"))
 
 
@@ -424,8 +507,10 @@ def render_session_list() -> None:
             open_col, del_col = st.columns([6, 1], vertical_alignment="center", gap="small")
             if open_col.button(
                 s["title"],
-                key=f"open_{s['id']}",
-                type="secondary" if is_current else "tertiary",  # cuộc đang mở có viền, còn lại dạng danh sách
+                # Tiền tố key quyết định kiểu hiển thị trong _CSS: open_active_ = cuộc đang mở (nền nhạt +
+                # vạch màu bên trái), open_ = các cuộc còn lại (dạng danh sách, không viền).
+                key=f"open_active_{s['id']}" if is_current else f"open_{s['id']}",
+                type="secondary" if is_current else "tertiary",  # nếu CSS không áp được thì cuộc đang mở vẫn có viền
                 width="stretch",
                 help=s["title"],
             ):
