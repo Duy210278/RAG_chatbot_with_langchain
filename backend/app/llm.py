@@ -122,6 +122,7 @@ async def _stream_gemini(
 _BASE_URLS = {
     "xai": "https://api.x.ai/v1",
     "groq": "https://api.groq.com/openai/v1",
+    "openrouter": "https://openrouter.ai/api/v1",
 }
 
 # Dấu hiệu hết quota/hết tiền nằm trong nội dung lỗi - cho các trường hợp không trả HTTP 429.
@@ -164,7 +165,7 @@ def _stream_for(
 ) -> AsyncIterator[str]:
     if provider == "anthropic":
         return _stream_anthropic(api_key, model, system, messages, usage_sink)
-    if provider in ("openai", "xai", "groq"):
+    if provider in ("openai", "xai", "groq", "openrouter"):
         return _stream_openai_compatible(
             api_key, model, system, messages, base_url=_BASE_URLS.get(provider), usage_sink=usage_sink
         )

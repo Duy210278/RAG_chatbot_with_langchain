@@ -1,7 +1,7 @@
 # RAG Chatbot v2 — MVP
 
 MVP triển khai từ [tai_lieu_thiet_ke_chatbot_v2.md](tai_lieu_thiet_ke_chatbot_v2.md): pipeline Ingestion (PDF/DOCX/PPTX/Markdown/HTML/TXT/Ảnh) →
-Chunking → Embedding (local) → Truy hồi lai (vector Qdrant + BM25) → Rerank → RAG Generation (Claude/OpenAI/Grok/Gemini/Groq) → Streamlit UI.
+Chunking → Embedding (local) → Truy hồi lai (vector Qdrant + BM25) → Rerank → RAG Generation (Claude/OpenAI/Grok/Gemini/Groq/OpenRouter) → Streamlit UI.
 
 Luồng hỏi đáp đầy đủ:
 
@@ -24,7 +24,7 @@ Luồng hỏi đáp đầy đủ:
 | Vector DB | Qdrant/Milvus server, hybrid search | **Qdrant local mode** (file-based, không cần Docker) + **hybrid search đã có**: BM25 chạy bằng SQLite FTS5 (bảng `chunks_fts`), trộn với vector bằng RRF — không cần sparse vector của Qdrant |
 | Metadata DB | PostgreSQL (RBAC, audit logs đầy đủ) | **SQLite**: documents + chunks, `chunks_fts` (chỉ mục BM25), `chat_sessions`/`chat_messages` (hội thoại), `query_logs` (nhật ký vận hành) — chưa RBAC |
 | Embedding | Chưa chỉ định | **Local, miễn phí**: `intfloat/multilingual-e5-small` (đa ngôn ngữ, hỗ trợ tiếng Việt) |
-| LLM | OpenAI/Anthropic/Gemini/Ollama | **Anthropic Claude, OpenAI, xAI Grok, Google Gemini, Groq**, chọn ở UI |
+| LLM | OpenAI/Anthropic/Gemini/Ollama | **Anthropic Claude, OpenAI, xAI Grok, Google Gemini, Groq, OpenRouter**, chọn ở UI |
 | Auth/RBAC | JWT, phân quyền role/department | **Chưa có.** Lưu ý: từ khi hội thoại được lưu bền, `GET /api/v1/chat/sessions` **không lọc theo người dùng** nên mọi người đều thấy cuộc trò chuyện của tất cả. Các endpoint `/api/v1/admin/*` cũng để lộ nguyên văn câu hỏi. An toàn khi chạy `localhost`, **không an toàn khi mở ra mạng nội bộ** |
 | Streaming | SSE | Có, qua `StreamingResponse` |
 | API key | Lưu mã hoá trong PostgreSQL, nhập qua UI (Tab Config) | **Chỉ khai báo trong `.env`** (không nhập trên UI) - UI tự lấy danh sách provider/model đã cấu hình qua `GET /api/v1/config/providers` |
@@ -70,6 +70,7 @@ Nếu không cài Tesseract, upload PDF text bình thường vẫn hoạt độn
 |---|---|---|
 | **Google Gemini** | [aistudio.google.com/apikey](https://aistudio.google.com/apikey) | Free tier thật, chất lượng tốt (Gemini 2.5 Flash) |
 | **Groq** | [console.groq.com/keys](https://console.groq.com/keys) | Free tier, chạy Llama 3.3 70B rất nhanh |
+| **OpenRouter** | [openrouter.ai/keys](https://openrouter.ai/keys) | Một key dùng được model của nhiều hãng. Có sẵn vài model đuôi `:free` (miễn phí, giới hạn lượt gọi); các model khác trả tiền theo lượt dùng |
 
 Anthropic Claude / OpenAI / xAI Grok không có free tier lâu dài (chỉ credit dùng thử ban đầu cho tài khoản mới).
 
@@ -202,9 +203,11 @@ Theo thứ tự ưu tiên thực tế, không theo thứ tự trong tài liệu 
    `QdrantClient(url=...)`, bổ sung payload `security.*` và `build_rbac_filter()` theo mục 5.2. Cũng là cách gỡ
    giới hạn "chỉ 1 tiến trình mở được kho vector" của chế độ nhúng hiện tại.
 8. **Docker Compose**: đóng gói Postgres + Qdrant server + backend + frontend khi cần triển khai thật.
-9. **Thêm LLM provider khác** (DeepSeek, Mistral, OpenRouter, Ollama/vLLM local...): hầu hết tương thích chuẩn
-   OpenAI Chat Completions, chỉ cần gọi `_stream_openai_compatible(api_key, model, system, user, base_url=...)`
-   có sẵn trong `backend/app/llm.py` với `base_url` riêng của provider đó — không cần viết hàm mới
-   (xem cách đã làm với xAI Grok).
+9. **Thêm LLM provider khác** (Ollama/vLLM chạy local...): hầu hết tương thích chuẩn OpenAI Chat Completions,
+   chỉ cần thêm `base_url` vào `_BASE_URLS` trong `backend/app/llm.py`, thêm provider vào `PROVIDER_LABELS` +
+   `api_key_for()` + `models_for()` trong `config.py`, và vào pattern `provider` của `ChatRequest` — không cần
+   viết hàm stream mới (xem cách đã làm với xAI Grok, Groq, OpenRouter). Riêng DeepSeek/Mistral/Qwen... thì dùng
+   luôn OpenRouter là xong, không cần thêm provider.
 
-> **Hybrid search** (mục 4 của bản lộ trình cũ) đã làm xong — BM25 bằng SQLite FTS5 trộn với vector bằng RRF.
+> Đã làm xong so với bản lộ trình cũ: **hybrid search** (BM25 bằng SQLite FTS5 trộn với vector bằng RRF) và
+> **OpenRouter** (một key dùng được model của nhiều hãng).

@@ -25,7 +25,7 @@ class ChatMessage(BaseModel):
 
 class ChatRequest(BaseModel):
     message: str
-    provider: str = Field(default="anthropic", pattern="^(anthropic|openai|xai|gemini|groq)$")
+    provider: str = Field(default="anthropic", pattern="^(anthropic|openai|xai|gemini|groq|openrouter)$")
     model: str | None = None
     top_k: int = 12  # khi bật rerank: số đoạn TỐI ĐA gửi cho LLM (có thể ít hơn nếu ít đoạn đạt ngưỡng)
     use_rerank: bool = True

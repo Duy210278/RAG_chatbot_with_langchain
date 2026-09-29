@@ -16,6 +16,7 @@ PROVIDER_LABELS = {
     "xai": "xAI Grok",
     "gemini": "Google Gemini (free tier)",
     "groq": "Groq (free tier)",
+    "openrouter": "OpenRouter (1 key, nhiều hãng)",
 }
 
 
@@ -30,6 +31,7 @@ class Settings(BaseSettings):
     xai_api_key: str | None = None
     google_api_key: str | None = None
     groq_api_key: str | None = None
+    openrouter_api_key: str | None = None
 
     # Danh sách model cho từng provider, phân cách bằng dấu phẩy - model đầu tiên là mặc định.
     # UI hiển thị đúng danh sách này dưới dạng dropdown (không cho gõ tay để tránh sai định dạng model ID).
@@ -38,6 +40,14 @@ class Settings(BaseSettings):
     xai_models: str = "grok-4,grok-4-fast"
     gemini_models: str = "gemini-3.6-flash,gemini-2.5-flash,gemini-2.5-pro,gemini-2.5-flash-lite,gemini-2.0-flash"
     groq_models: str = "llama-3.3-70b-versatile,llama-3.1-8b-instant"
+    # OpenRouter là cổng trung gian: một key dùng được model của nhiều hãng, model ID luôn dạng "hãng/model".
+    # Danh sách dưới đây xếp theo giá tăng dần (giá tại thời điểm thêm, USD/1 triệu token vào-ra):
+    # gpt-6-luna 0.10/0.50 · llama-4-maverick 0.19/0.65 · deepseek-v4.1-flash 0.30/1.20
+    # · gemini-3.8-flash 0.75/3.75 · claude-sonnet-5.5 2.00/10.00. Bản ":free" miễn phí nhưng giới hạn lượt gọi.
+    openrouter_models: str = (
+        "openai/gpt-6-luna,meta-llama/llama-4-maverick,deepseek/deepseek-v4.1-flash,"
+        "google/gemini-3.8-flash,anthropic/claude-sonnet-5.5,nvidia/nemotron-3.5-lightning:free"
+    )
 
     # --- Lịch sử hội thoại làm ngữ cảnh multi-turn ---
     # Giới hạn số tin nhắn lịch sử gửi kèm cho LLM (tính cả user+assistant) để tránh
@@ -110,6 +120,7 @@ class Settings(BaseSettings):
             "xai": self.xai_api_key,
             "gemini": self.google_api_key,
             "groq": self.groq_api_key,
+            "openrouter": self.openrouter_api_key,
         }.get(provider)
 
     def models_for(self, provider: str) -> list[str]:
@@ -119,6 +130,7 @@ class Settings(BaseSettings):
             "xai": self.xai_models,
             "gemini": self.gemini_models,
             "groq": self.groq_models,
+            "openrouter": self.openrouter_models,
         }.get(provider, "")
         return [m.strip() for m in raw.split(",") if m.strip()]
 
