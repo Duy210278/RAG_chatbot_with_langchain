@@ -3,11 +3,11 @@ Giao diện Streamlit MVP - tương ứng mục 6.1 của tài liệu thiết k�
 các phần cốt lõi cho MVP: Chat & Citations, Nạp dữ liệu, Danh sách tài liệu, Giám sát.
 
 Mỗi phần là một TRANG riêng (st.navigation, thanh điều hướng phía trên) thay vì tab: với tab,
-ô chat bị ghim ở đáy MỌI tab (gõ câu hỏi ở tab Giám sát thì câu trả lời hiện ở tab khác), và
-sidebar cấu hình model vẫn hiện cả khi đang nạp tài liệu.
+ô chat bị ghim ở đáy MỌI tab (gõ câu hỏi ở tab Giám sát thì câu trả lời hiện ở tab khác).
+Sidebar (cấu hình hỏi đáp + lịch sử trò chuyện) thì dùng chung, hiện ở mọi trang.
 
 API key KHÔNG nhập trên UI - chỉ khai báo trong file .env của backend (xem README).
-Sidebar trang Hỏi đáp chỉ hiển thị Provider/Model đã có key cấu hình sẵn (lấy từ
+Sidebar chỉ hiển thị Provider/Model đã có key cấu hình sẵn (lấy từ
 GET /api/v1/config/providers), cùng Top-K và bật/tắt Reranker.
 """
 
@@ -34,6 +34,13 @@ DOC_CATEGORIES = [c for c in CATEGORY_LABELS if c != "ALL"]
 
 USER_AVATAR = ":material/person:"
 BOT_AVATAR = ":material/smart_toy:"
+
+# Tỉ lệ khung chat : khung gợi ý trên trang Hỏi đáp. Dùng chung cho st.columns và cho CSS đặt độ rộng
+# ô nhập câu hỏi (xem _CSS), để hai chỗ luôn khớp nhau khi đổi tỉ lệ.
+_CHAT_COLUMNS = [7, 3]
+
+# Số cuộc trò chuyện hiện cùng lúc trong sidebar (mới nhất trước); nhiều hơn thì cuộn trong danh sách.
+_SESSIONS_VISIBLE = 5
 
 # Nội dung thay cho lượt lỗi khi gửi lại làm lịch sử hội thoại cho LLM.
 ERROR_PLACEHOLDER = "(Không trả lời được do lỗi hệ thống ở lượt này.)"
@@ -88,6 +95,18 @@ _CSS = """
 }
 [class*="st-key-open_"] button:hover { background: rgba(128, 128, 128, 0.12) !important; }
 
+/* ---- Danh sách hội thoại chỉ cao vừa __SESSIONS_VISIBLE__ mục, còn lại cuộn bên trong ----
+   max-height (không phải height cố định) nên ít hơn __SESSIONS_VISIBLE__ mục thì danh sách tự co lại.
+   Mỗi mục cao 2.5rem (chiều cao tối thiểu của nút Streamlit), cách nhau 0.25rem. */
+.st-key-sessions {
+    gap: 0.25rem !important;
+    max-height: calc(__SESSIONS_VISIBLE__ * 2.5rem + (__SESSIONS_VISIBLE__ - 1) * 0.25rem);
+    overflow-y: auto;
+    overflow-x: hidden;
+    padding-right: 0.25rem;               /* chừa chỗ cho thanh cuộn, không đè lên nút xoá */
+    scrollbar-width: thin;
+}
+
 /* ---- Cuộc trò chuyện đang mở: nền nhạt + vạch màu bên trái + chữ đậm ---- */
 [class*="st-key-open_active_"] button {
     background: rgba(255, 75, 75, 0.12) !important;
@@ -128,6 +147,14 @@ _CSS = """
         align-self: flex-start;           /* không kéo giãn theo chiều cao cột chat */
         max-height: calc(100vh - 10rem);  /* chừa cả ô nhập câu hỏi ghim ở đáy màn hình */
         overflow-y: auto;                 /* danh sách dài hơn màn hình thì cuộn bên trong cột */
+    }
+
+    /* ---- Ô nhập câu hỏi chỉ rộng bằng cột chat, không kéo dài xuống dưới cột gợi ý ----
+       Ô chat ghim ở đáy nằm ngoài lưới cột nên mặc định rộng hết trang. Đặt lại bằng đúng bề rộng cột
+       chat: (bề rộng nội dung - khoảng cách giữa 2 cột) × tỉ lệ cột chat. 4rem = gap="large" của
+       st.columns; tỉ lệ lấy từ _CHAT_COLUMNS nên đổi tỉ lệ cột thì ô nhập tự đổi theo. */
+    [data-testid="stBottomBlockContainer"] [data-testid="stChatInput"] {
+        width: calc((100% - 4rem) * __CHAT_FRACTION__);
     }
 }
 </style>
@@ -485,11 +512,11 @@ def render_suggestions(category: str, enabled: bool) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Sidebar trang Hỏi đáp: cấu hình trả lời + lịch sử trò chuyện
+# Sidebar dùng chung mọi trang: cấu hình hỏi đáp + lịch sử trò chuyện
 # ---------------------------------------------------------------------------
-def render_session_list() -> None:
+def render_session_list(chat_page_ref) -> None:
     try:
-        sessions = api_get("/api/v1/chat/sessions", limit=30)
+        sessions = api_get("/api/v1/chat/sessions", limit=100)  # chỉ hiện _SESSIONS_VISIBLE mục, còn lại cuộn
     except requests.exceptions.RequestException:
         st.caption("⚠️ Không tải được danh sách hội thoại.")
         return
@@ -515,7 +542,7 @@ def render_session_list() -> None:
                 help=s["title"],
             ):
                 load_session(s["id"])
-                st.rerun()
+                st.switch_page(chat_page_ref)  # mở từ trang khác (Tài liệu, Giám sát...) thì chuyển về trang Hỏi đáp
             if del_col.button(":material/delete:", key=f"delses_{s['id']}", type="tertiary", help="Xoá cuộc trò chuyện này"):
                 try:
                     requests.delete(f"{API_BASE}/api/v1/chat/sessions/{s['id']}", timeout=15).raise_for_status()
@@ -528,11 +555,12 @@ def render_session_list() -> None:
                     st.rerun()
 
 
-def render_chat_sidebar() -> dict:
-    """Trả về cấu hình đang chọn: provider/model/phạm vi/rerank/top_k."""
+def render_sidebar(chat_page_ref) -> dict:
+    """Sidebar dùng chung mọi trang. Trả về cấu hình đang chọn: provider/model/phạm vi/rerank/top_k.
+    chat_page_ref: trang Hỏi đáp - để chuyển về đó khi mở/tạo cuộc trò chuyện từ trang khác."""
     with st.sidebar:
         head, refresh = st.columns([5, 1], vertical_alignment="center")
-        head.subheader("⚙️ Cấu hình", anchor=False)
+        head.subheader("⚙️ Cấu hình hỏi đáp", anchor=False)
         if refresh.button(
             ":material/refresh:",
             type="tertiary",
@@ -585,8 +613,8 @@ def render_chat_sidebar() -> dict:
         if st.button("Cuộc trò chuyện mới", icon=":material/add:", width="stretch"):
             st.session_state.session_id = None
             st.session_state.messages = []
-            st.rerun()
-        render_session_list()
+            st.switch_page(chat_page_ref)
+        render_session_list(chat_page_ref)
 
         st.divider()
         st.caption(f"Backend: {API_BASE}")
@@ -605,14 +633,14 @@ def render_chat_sidebar() -> dict:
 # Trang 1: Hỏi đáp Chatbot & Citation
 # ---------------------------------------------------------------------------
 def chat_page() -> None:
-    cfg = render_chat_sidebar()
+    cfg = chat_cfg  # sidebar đã dựng ở phần điều hướng (cuối file), trước khi trang này chạy
 
     # st.chat_input CHỈ tự ghim cố định xuống đáy màn hình khi được gọi ở thân trang (ngoài mọi
     # container/cột) - đặt trong cột thì nó sẽ nằm giữa dòng thay vì cố định.
     question = st.chat_input("Đặt câu hỏi về tài liệu nội bộ...", disabled=cfg["provider"] is None)
     question = question or st.session_state.pop("pending_question", None)  # câu chọn từ cột gợi ý
 
-    chat_col, suggest_col = st.columns([7, 3], gap="large")
+    chat_col, suggest_col = st.columns(_CHAT_COLUMNS, gap="large")
     # Vẽ cột gợi ý TRƯỚC khung chat: script dừng ở vòng streaming câu trả lời, vẽ sau thì
     # cột này chỉ hiện ra khi đã trả lời xong.
     with suggest_col:
@@ -873,14 +901,25 @@ st.session_state.setdefault("messages", [])
 st.session_state.setdefault("session_id", None)
 st.session_state.setdefault("rated", set())
 
-st.markdown(_CSS, unsafe_allow_html=True)
+st.markdown(
+    _CSS.replace("__CHAT_FRACTION__", f"{_CHAT_COLUMNS[0] / sum(_CHAT_COLUMNS):.4f}").replace(
+        "__SESSIONS_VISIBLE__", str(_SESSIONS_VISIBLE)
+    ),
+    unsafe_allow_html=True,
+)
 
-st.navigation(
+chat = st.Page(chat_page, title="Hỏi đáp", icon=":material/chat:", default=True)
+current_page = st.navigation(
     [
-        st.Page(chat_page, title="Hỏi đáp", icon=":material/chat:", default=True),
+        chat,
         st.Page(upload_page, title="Nạp tài liệu", icon=":material/upload_file:", url_path="upload"),
         st.Page(documents_page, title="Tài liệu", icon=":material/description:", url_path="documents"),
         st.Page(monitor_page, title="Giám sát", icon=":material/monitoring:", url_path="monitor"),
     ],
     position="top",
-).run()
+)
+# Dựng sidebar GIỮA navigation() và run(): phần này chạy ở mọi trang, nên sidebar luôn hiện và các widget
+# trong đó (provider/model/phạm vi...) giữ nguyên giá trị khi chuyển trang. Trước đây sidebar chỉ dựng trong
+# trang Hỏi đáp: sang trang khác thì sidebar biến mất, quay lại thì cấu hình đã chọn bị đặt lại mặc định.
+chat_cfg = render_sidebar(chat)
+current_page.run()
