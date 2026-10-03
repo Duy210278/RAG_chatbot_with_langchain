@@ -92,10 +92,15 @@ class UnansweredGroup(BaseModel):
 
 
 class AdminStats(BaseModel):
+    """total_queries = answered_count + no_answer_count + error_count. Các chỉ số thời gian, khâu và độ tin
+    cậy chỉ tính trên lượt không lỗi provider (latency_sample = số lượt dùng để tính thời gian)."""
+
     days: int
     total_queries: int
-    no_answer_count: int
-    error_count: int
+    answered_count: int = 0  # trả lời có trích dẫn được ít nhất một nguồn
+    no_answer_count: int  # bó tay: không tìm thấy tài liệu, hoặc trả lời mà không trích được nguồn nào
+    error_count: int  # lỗi provider - hết quota, sai key, sai model...
+    latency_sample: int = 0
     invalid_citation_count: int
     positive_feedback: int
     negative_feedback: int

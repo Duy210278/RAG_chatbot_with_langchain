@@ -30,28 +30,36 @@ def _percentile(values: list[int], pct: float) -> int:
 
 @router.get("/stats", response_model=schemas.AdminStats)
 def stats(days: int = 7, db: Session = Depends(get_db)):
+    """Lượt lỗi provider (hết quota, sai key, sai model...) chỉ được đếm ở error_count. Mọi chỉ số chất lượng
+    và tốc độ khác chỉ tính trên các lượt KHÔNG lỗi. Trước đây có tính cả lượt lỗi: rag.py ghi lượt lỗi là
+    no_answer, nên "không trả lời được" đếm trùng với "lỗi provider" (19 thì 18 là lỗi). Lượt lỗi lại hỏng
+    sớm, nên kéo thời gian trung bình xuống thấp hơn cả thời gian ra chữ đầu tiên."""
     since = datetime.now(timezone.utc) - timedelta(days=days)
     rows = db.query(models.QueryLog).filter(models.QueryLog.created_at >= since).all()
+    ok = [r for r in rows if not r.error]
 
-    durations = [r.total_ms for r in rows if r.total_ms]
-    first_tokens = [r.first_token_ms for r in rows if r.first_token_ms]
+    durations = [r.total_ms for r in ok if r.total_ms]
+    first_tokens = [r.first_token_ms for r in ok if r.first_token_ms]
 
     # Trung bình từng khâu: gộp theo tên khâu để thấy khâu nào ăn hết thời gian.
     stage_totals: dict[str, list[int]] = {}
-    for row in rows:
+    for row in ok:
         for name, ms in json.loads(row.latency_json or "{}").items():
             stage_totals.setdefault(name, []).append(ms)
 
     by_confidence: dict[str, int] = {}
-    for row in rows:
+    for row in ok:
         key = row.confidence or "khong_ro"
         by_confidence[key] = by_confidence.get(key, 0) + 1
 
+    no_answer = sum(1 for r in ok if r.no_answer)
     return schemas.AdminStats(
         days=days,
         total_queries=len(rows),
-        no_answer_count=sum(1 for r in rows if r.no_answer),
-        error_count=sum(1 for r in rows if r.error),
+        answered_count=len(ok) - no_answer,
+        no_answer_count=no_answer,
+        error_count=len(rows) - len(ok),
+        latency_sample=len(durations),
         invalid_citation_count=sum(1 for r in rows if r.invalid_citations),
         positive_feedback=sum(1 for r in rows if r.feedback == 1),
         negative_feedback=sum(1 for r in rows if r.feedback == -1),
@@ -121,7 +129,8 @@ def queries(only_problems: bool = True, days: int = 30, limit: int = 100, db: Se
 @router.get("/unanswered", response_model=list[schemas.UnansweredGroup])
 def unanswered(days: int = 30, limit: int = 30, db: Session = Depends(get_db)):
     """Gom các câu hỏi mà hệ thống bó tay theo nội dung câu hỏi - câu nào lặp lại nhiều lần
-    chính là khoảng trống tài liệu cần bổ sung trước."""
+    chính là khoảng trống tài liệu cần bổ sung trước. Bỏ lượt lỗi provider: câu đó hỏng vì LLM
+    (hết quota...), không nói gì về việc tài liệu có trả lời được hay không."""
     since = datetime.now(timezone.utc) - timedelta(days=days)
     rows = (
         db.query(
@@ -129,7 +138,11 @@ def unanswered(days: int = 30, limit: int = 30, db: Session = Depends(get_db)):
             func.count(models.QueryLog.id).label("n"),
             func.max(models.QueryLog.created_at).label("last_seen"),
         )
-        .filter(models.QueryLog.created_at >= since, models.QueryLog.no_answer.is_(True))
+        .filter(
+            models.QueryLog.created_at >= since,
+            models.QueryLog.no_answer.is_(True),
+            models.QueryLog.error.is_(None),
+        )
         .group_by(models.QueryLog.question)
         .order_by(func.count(models.QueryLog.id).desc())
         .limit(limit)

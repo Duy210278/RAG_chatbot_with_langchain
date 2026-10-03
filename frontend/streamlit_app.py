@@ -14,7 +14,10 @@ GET /api/v1/config/providers), cùng Top-K, bật/tắt Reranker và Chế độ
 import json
 import mimetypes
 import os
+from datetime import datetime, timezone
 
+import altair as alt  # altair và pandas đi kèm streamlit, không cần cài thêm
+import pandas as pd
 import requests
 import streamlit as st
 
@@ -822,6 +825,64 @@ def documents_page() -> None:
 # ---------------------------------------------------------------------------
 # Trang 4: Giám sát vận hành
 # ---------------------------------------------------------------------------
+# Tên khâu trong latency_json -> nhãn hiển thị, theo đúng thứ tự chạy trong một lượt hỏi
+# (biểu đồ mặc định xếp theo bảng chữ cái: agent, expand, generate... - không đọc ra được luồng xử lý).
+_STAGE_LABELS = {
+    "agent": "Agent quyết định",
+    "rewrite": "Viết lại câu hỏi",
+    "retrieve": "Tìm kiếm",
+    "rerank": "Chấm lại (rerank)",
+    "expand": "Ghép đoạn lân cận",
+    "generate": "Sinh câu trả lời",
+}
+
+# Mức tin cậy từ tốt đến xấu, cùng màu với huy hiệu dưới mỗi câu trả lời (_CONFIDENCE_BADGE).
+_CONFIDENCE_LEVELS = [
+    ("cao", "Cao", "#21c354"),
+    ("trung_binh", "Trung bình", "#faca2b"),
+    ("thap", "Thấp", "#ff4b4b"),
+    ("khong_do_duoc", "Chưa đo được", "#808495"),
+    ("khong_ro", "Không rõ", "#808495"),
+]
+_CONFIDENCE_SHORT = {"cao": "🟢 Cao", "trung_binh": "🟡 Trung bình", "thap": "🔴 Thấp", "khong_do_duoc": "⚪ Chưa đo"}
+
+
+def _local_time(iso: str) -> str:
+    """created_at trong DB là giờ UTC không kèm múi giờ - đổi sang giờ của máy chạy UI cho dễ đối chiếu."""
+    try:
+        return datetime.fromisoformat(iso).replace(tzinfo=timezone.utc).astimezone().strftime("%d/%m %H:%M")
+    except ValueError:
+        return iso[:16].replace("T", " ")
+
+
+def _hbar_chart(labels: list[str], values: list[float], colors: list[str] | None = None):
+    """Biểu đồ thanh NGANG, số liệu ghi ngay trong nhãn (vd "Sinh câu trả lời · 6.9s"): nhãn tiếng Việt dài
+    đọc được mà không phải xoay dọc, và đọc số mà không phải dò theo trục.
+
+    Không vẽ số ở đầu thanh bằng mark_text: theme Streamlit không tô màu chữ đó, trên nền tối chữ tối gần
+    như vô hình. Nhãn trục thì được tô theo theme nên đọc được ở cả nền sáng lẫn tối."""
+    df = pd.DataFrame({"label": labels, "value": values})
+    chart = alt.Chart(df).mark_bar(cornerRadiusEnd=4, height=22).encode(
+        y=alt.Y("label:N", sort=None, title=None, axis=alt.Axis(labelLimit=260, labelFontSize=13)),
+        x=alt.X("value:Q", axis=None),
+        tooltip=[alt.Tooltip("label:N", title="")],
+    )
+    if colors:
+        chart = chart.encode(color=alt.Color("label:N", scale=alt.Scale(domain=labels, range=colors), legend=None))
+    return chart.properties(height=36 * len(labels) + 16)
+
+
+def _outcome(r: dict) -> str:
+    """Kết quả của một lượt trong MỘT cột, thay cho 3 cột Bó tay / Trích dẫn hỏng / Phản hồi vốn bị cắt mất ở mép phải."""
+    if r["error"]:
+        tags = ["⚠️ Lỗi provider"]
+    else:
+        tags = [t for cond, t in ((r["no_answer"], "🕳️ Bó tay"), (r["invalid_citations"], "🔗 Trích dẫn hỏng")) if cond]
+        tags = tags or ["✅ Trả lời"]
+    tags += [{1: "👍", -1: "👎"}[r["feedback"]]] if r["feedback"] in (1, -1) else []
+    return " · ".join(tags)
+
+
 def monitor_page() -> None:
     head, period_col = st.columns([3, 1], vertical_alignment="bottom")
     head.header("📊 Giám sát vận hành", anchor=False)
@@ -842,35 +903,95 @@ def monitor_page() -> None:
     if data and not data["total_queries"]:
         st.info("Chưa có lượt hỏi nào trong khoảng thời gian này.")
     elif data:
-        c1, c2, c3, c4 = st.columns(4)
-        c1.metric("Tổng lượt hỏi", data["total_queries"], border=True)
+        total = data["total_queries"]
+
+        def share(n: int) -> str:
+            return f"{n / total * 100:.0f}% số lượt"
+
+        # Ba ô giữa chia hết tổng số lượt (trả lời được + bó tay + lỗi provider = tổng), không ô nào đếm trùng.
+        # Phần trăm hiện ở dạng nhãn không mũi tên: đây là tỉ lệ trên tổng, không phải mức tăng/giảm.
+        # Mọi ô cùng có một dòng nhãn để các thẻ cao bằng nhau.
+        c1, c2, c3, c4, c5 = st.columns(5)
+        c1.metric("Tổng lượt hỏi", total, delta=f"{period} ngày gần nhất", delta_color="off", delta_arrow="off", border=True)
         c2.metric(
+            "Trả lời được",
+            data["answered_count"],
+            delta=share(data["answered_count"]),
+            delta_color="normal" if data["answered_count"] else "off",
+            delta_arrow="off",
+            border=True,
+            help="Câu trả lời có trích dẫn ít nhất một nguồn tài liệu.",
+        )
+        c3.metric(
             "Không trả lời được",
             data["no_answer_count"],
-            delta=f"{data['no_answer_count'] / data['total_queries'] * 100:.0f}%",
-            delta_color="inverse",
+            delta=share(data["no_answer_count"]),
+            delta_color="inverse" if data["no_answer_count"] else "off",
+            delta_arrow="off",
+            border=True,
+            help="Không tìm thấy tài liệu liên quan, hoặc LLM trả lời mà không trích được nguồn nào. "
+            "Không tính lượt lỗi provider. Danh sách câu hỏi ở mục 🕳️ bên dưới.",
+        )
+        c4.metric(
+            "Lỗi provider",
+            data["error_count"],
+            delta=share(data["error_count"]),
+            delta_color="inverse" if data["error_count"] else "off",
+            delta_arrow="off",
+            border=True,
+            help="Hết quota, sai API key, sai tên model... - lỗi phía LLM, không phải do tài liệu.",
+        )
+        rated = data["positive_feedback"] + data["negative_feedback"]
+        c5.metric(
+            "Phản hồi 👍 / 👎",
+            f"{data['positive_feedback']} / {data['negative_feedback']}",
+            delta=f"{rated} lượt được chấm",
+            delta_color="off",
+            delta_arrow="off",
             border=True,
         )
-        c3.metric("👎 Phản hồi tiêu cực", data["negative_feedback"], border=True)
-        c4.metric("Lỗi provider", data["error_count"], border=True)
 
-        c5, c6, c7, c8 = st.columns(4)
-        c5.metric("Thời gian TB", f"{data['avg_total_ms'] / 1000:.1f}s", border=True)
-        c6.metric("P95", f"{data['p95_total_ms'] / 1000:.1f}s", border=True)
-        c7.metric("Chữ đầu tiên (TB)", f"{data['avg_first_token_ms'] / 1000:.1f}s", border=True)
-        c8.metric("👍 Phản hồi tích cực", data["positive_feedback"], border=True)
+        c6, c7, c8 = st.columns(3)
+        c6.metric("⏱️ Thời gian trả lời TB", f"{data['avg_total_ms'] / 1000:.1f}s", border=True)
+        c7.metric("⏱️ P95", f"{data['p95_total_ms'] / 1000:.1f}s", border=True, help="95% số lượt xong trong khoảng này.")
+        c8.metric("⏱️ Ra chữ đầu tiên (TB)", f"{data['avg_first_token_ms'] / 1000:.1f}s", border=True)
+        st.caption(
+            f"Thời gian, các khâu và độ tin cậy chỉ tính trên {data['latency_sample']} lượt không lỗi provider - "
+            "lượt lỗi thường hỏng ngay từ đầu, tính vào sẽ kéo thời gian trung bình xuống thấp một cách vô nghĩa."
+        )
 
-        left, right = st.columns(2)
+        left, right = st.columns(2, gap="large")
         with left:
             st.subheader("⏱️ Thời gian trung bình từng khâu", anchor=False)
-            if data["stage_avg_ms"]:
-                st.bar_chart({"ms": data["stage_avg_ms"]})
+            stages = data["stage_avg_ms"]
+            if stages:
+                order = [k for k in _STAGE_LABELS if k in stages] + [k for k in stages if k not in _STAGE_LABELS]
+                st.altair_chart(
+                    _hbar_chart(
+                        [f"{_STAGE_LABELS.get(k, k)} · {stages[k] / 1000:.1f}s" for k in order],
+                        [stages[k] / 1000 for k in order],
+                    ),
+                    width="stretch",
+                )
+                st.caption("Mỗi khâu tính trung bình trên các lượt có chạy khâu đó (vd Agent chỉ ở lượt bật Agent).")
             else:
                 st.caption("Chưa có dữ liệu.")
         with right:
             st.subheader("🎯 Phân bố độ tin cậy", anchor=False)
-            if data["by_confidence"]:
-                st.bar_chart({"số lượt": data["by_confidence"]})
+            counts = data["by_confidence"]
+            if counts:
+                known = {key for key, _, _ in _CONFIDENCE_LEVELS}
+                levels = [lv for lv in _CONFIDENCE_LEVELS if counts.get(lv[0])]
+                levels += [(k, k, "#808495") for k in counts if k not in known]
+                st.altair_chart(
+                    _hbar_chart(
+                        [f"{label} · {counts[key]} lượt" for key, label, _ in levels],
+                        [counts[key] for key, _, _ in levels],
+                        colors=[color for _, _, color in levels],
+                    ),
+                    width="stretch",
+                )
+                st.caption("Ước lượng từ bằng chứng truy hồi (điểm rerank), không phải phép đo hallucination.")
             else:
                 st.caption("Chưa có dữ liệu.")
 
@@ -894,7 +1015,7 @@ def monitor_page() -> None:
                         "👎": m["negative_feedback"],
                         "Lỗi provider": m["errors"],
                     }
-                    for name, m in (("Thường", by_mode["thuong"]), ("Agent", by_mode["agent"]))
+                    for name, m in (("Thường", by_mode["thuong"]), ("🤖 Agent", by_mode["agent"]))
                 ],
                 hide_index=True,
                 width="stretch",
@@ -918,11 +1039,23 @@ def monitor_page() -> None:
 
     st.divider()
     st.subheader("🕳️ Câu hỏi hệ thống bó tay (gom theo nội dung)", anchor=False)
-    st.caption("Câu nào lặp lại nhiều lần chính là khoảng trống tài liệu nên bổ sung trước.")
+    st.caption(
+        "Câu nào lặp lại nhiều lần chính là khoảng trống tài liệu nên bổ sung trước. "
+        "Không gồm lượt lỗi provider - những câu đó hỏng vì LLM, không phải vì thiếu tài liệu."
+    )
     try:
         gaps = api_get("/api/v1/admin/unanswered", days=period, limit=30)
         if gaps:
-            st.dataframe(gaps, hide_index=True, width="stretch")
+            st.dataframe(
+                [{"Câu hỏi": g["question"], "Số lần": g["count"], "Lần gần nhất": _local_time(g["last_seen"])} for g in gaps],
+                hide_index=True,
+                width="stretch",
+                column_config={
+                    "Câu hỏi": st.column_config.TextColumn(width="large"),
+                    "Số lần": st.column_config.NumberColumn(width="small"),
+                    "Lần gần nhất": st.column_config.TextColumn(width="small"),
+                },
+            )
         else:
             st.success("Không có câu hỏi nào bị bỏ trống.")
     except requests.exceptions.RequestException as exc:
@@ -930,7 +1063,11 @@ def monitor_page() -> None:
 
     st.divider()
     st.subheader("🔍 Các lượt hỏi cần xem lại", anchor=False)
-    only_problems = st.toggle("Chỉ hiện lượt có vấn đề", value=True)
+    only_problems = st.toggle(
+        "Chỉ hiện lượt có vấn đề",
+        value=True,
+        help="Bó tay, trích dẫn hỏng, bị chấm 👎, hoặc lỗi provider.",
+    )
     try:
         rows = api_get("/api/v1/admin/queries", only_problems=only_problems, days=period, limit=100)
         if not rows:
@@ -939,28 +1076,40 @@ def monitor_page() -> None:
             st.dataframe(
                 [
                     {
-                        "Lúc": r["created_at"][:19].replace("T", " "),
-                        "Câu hỏi": r["question"][:80],
+                        "Lúc": _local_time(r["created_at"]),
+                        "Câu hỏi": r["question"],
+                        "Kết quả": _outcome(r),
                         "Chế độ": "🤖 Agent" if r.get("agent_mode") else ("Thường (agent lỗi)" if r.get("agent") else "Thường"),
-                        # Chế độ Agent không viết lại câu hỏi - hiện các truy vấn agent đã tìm thay vào đó.
-                        "Truy vấn": (
-                            " | ".join(s["query"] for s in (r.get("agent") or {}).get("steps", []) if s.get("query"))
-                            or r["rewritten_query"]
-                            or ""
-                        )[:80],
+                        "Tin cậy": _CONFIDENCE_SHORT.get(r["confidence"], "—"),
                         "Hits": r["n_hits"],
-                        "Điểm cao nhất": round(r["top_score"], 3) if r["top_score"] is not None else None,
-                        "Tin cậy": r["confidence"],
-                        "Trích dẫn hỏng": r["invalid_citations"],
-                        "Bó tay": r["no_answer"],
-                        "Phản hồi": {1: "👍", -1: "👎"}.get(r["feedback"], ""),
-                        "Tổng (s)": round(r["total_ms"] / 1000, 1),
-                        "Lỗi": (r["error"] or "")[:60],
+                        "Điểm cao nhất": r["top_score"],
+                        "Thời gian": r["total_ms"] / 1000,
+                        # Chế độ Agent không viết lại câu hỏi - hiện các truy vấn agent đã tìm thay vào đó.
+                        "Truy vấn": " | ".join(
+                            s["query"] for s in (r.get("agent") or {}).get("steps", []) if s.get("query")
+                        )
+                        or r["rewritten_query"]
+                        or "",
+                        "Chi tiết lỗi": " ".join((r["error"] or "").split())[:200],
                     }
                     for r in rows
                 ],
                 hide_index=True,
                 width="stretch",
+                # Độ rộng tính bằng pixel để các cột hay xem (đến "Thời gian") vừa một màn hình laptop. Hai cột
+                # chi tiết ở cuối dài tuỳ ý nên để cuộn ngang thay vì ép hẹp các cột phía trước.
+                column_config={
+                    "Lúc": st.column_config.TextColumn(width=95),
+                    "Câu hỏi": st.column_config.TextColumn(width=300),
+                    "Kết quả": st.column_config.TextColumn(width=150),
+                    "Chế độ": st.column_config.TextColumn(width=130),
+                    "Tin cậy": st.column_config.TextColumn(width=115),
+                    "Hits": st.column_config.NumberColumn(width=50),
+                    "Điểm cao nhất": st.column_config.NumberColumn(format="%.3f", width=100),
+                    "Thời gian": st.column_config.NumberColumn(format="%.1f s", width=80),
+                    "Truy vấn": st.column_config.TextColumn(width=220),
+                    "Chi tiết lỗi": st.column_config.TextColumn(width=320),
+                },
             )
     except requests.exceptions.RequestException as exc:
         st.error(f"Không tải được danh sách: {exc}")
