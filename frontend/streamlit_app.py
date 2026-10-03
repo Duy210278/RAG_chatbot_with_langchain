@@ -705,8 +705,14 @@ def upload_page() -> None:
             resp = requests.post(f"{API_BASE}/api/v1/documents/upload", files=files, data=data, timeout=300)
             if resp.status_code == 409:  # file trùng nội dung với tài liệu đã nạp
                 st.warning(resp.json()["detail"])
+            elif not resp.ok:
+                # Hiện đúng lý do backend trả về (vd "No module named 'pptx'") thay vì "500 Server Error" chung chung.
+                try:
+                    detail = resp.json().get("detail") or resp.text
+                except ValueError:
+                    detail = resp.text or f"HTTP {resp.status_code}"
+                st.error(f"Không nạp được tài liệu: {detail}")
             else:
-                resp.raise_for_status()
                 result = resp.json()["document"]
                 st.success(f"Đã nạp '{result['title']}' — {result['chunk_count']} chunks.", icon=":material/check_circle:")
         except requests.exceptions.RequestException as exc:
