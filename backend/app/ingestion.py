@@ -177,6 +177,19 @@ def _extract_chart_text(chart) -> str:
     return "[Dữ liệu biểu đồ]\n" + "\n".join(lines)
 
 
+def _iter_shapes(shapes):
+    """Duyệt cả các shape nằm trong nhóm (group, lồng nhiều cấp). Bản cũ chỉ duyệt cấp ngoài cùng, mà nhóm
+    không có text_frame, nên mọi chữ/bảng/ảnh trong nhóm bị bỏ sót: 7/61 slide của bộ nội quy mất chữ, trong
+    đó slide "Lương, thưởng, phụ cấp" mất nguyên ngày trả lương - hỏi gì cũng trả lời "không tìm thấy"."""
+    from pptx.enum.shapes import MSO_SHAPE_TYPE
+
+    for shape in shapes:
+        if shape.shape_type == MSO_SHAPE_TYPE.GROUP:
+            yield from _iter_shapes(shape.shapes)
+        else:
+            yield shape
+
+
 def extract_pptx_slides(file_path: str) -> list[tuple[int, str]]:
     """Trả về (số slide, nội dung) cho từng slide - số slide đóng vai trò page_number.
     Mỗi phần trích xuất (text, bảng, ảnh, chart) được bọc try/except riêng: 1 shape lỗi
@@ -189,7 +202,7 @@ def extract_pptx_slides(file_path: str) -> list[tuple[int, str]]:
     slides: list[tuple[int, str]] = []
     for i, slide in enumerate(prs.slides, start=1):
         parts: list[str] = []
-        for shape in slide.shapes:
+        for shape in _iter_shapes(slide.shapes):
             if getattr(shape, "has_text_frame", False):
                 text = shape.text_frame.text.strip()
                 if text:
