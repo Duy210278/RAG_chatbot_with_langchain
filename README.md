@@ -16,6 +16,9 @@ Luồng hỏi đáp đầy đủ:
    sự được trích, và chấm một chỉ báo độ tin cậy (dựa trên bằng chứng truy hồi, *không phải* phép đo hallucination).
 6. **Ghi lại toàn bộ** vào `query_logs` — kể cả lượt hỏng — kèm thời gian từng khâu và số token.
 
+Bật **Chế độ Agent** (thử nghiệm, xem [mục riêng](#chế-độ-agent-thử-nghiệm)) thì bước 1–3 được thay bằng một agent
+tự quyết tìm gì, tìm mấy lần; bước 4–6 giữ nguyên.
+
 ## Kiến trúc MVP so với thiết kế đầy đủ
 
 | Thành phần | Thiết kế đầy đủ | MVP hiện tại |
@@ -140,6 +143,43 @@ văn `QUOTA_FALLBACK_RESULTS` (mặc định 3) đoạn tài liệu liên quan n
 Qua API, nội dung này đến bằng sự kiện SSE `fallback` (`{"reason": "quota", "text": ...}`) thay cho `error`.
 Các lỗi khác (key sai, sai tên model...) vẫn báo lỗi như cũ.
 
+### Chế độ Agent (thử nghiệm)
+
+Công tắc **Chế độ Agent** nằm trong "Tuỳ chọn truy hồi nâng cao" ở sidebar, mặc định tắt, chọn theo từng câu hỏi.
+Khi bật, thay vì viết lại câu hỏi rồi tìm đúng một lần, LLM được gọi công cụ nhiều lượt ([backend/app/agent.py](backend/app/agent.py)):
+
+| Công cụ | Dùng khi |
+|---|---|
+| `search_documents(query, category?)` | Tìm như chế độ thường (truy hồi lai + rerank), nhưng truy vấn do agent viết: tách câu hỏi nhiều ý, chép chủ thể từ lịch sử hội thoại, đổi cách diễn đạt khi tìm trượt. `category` chỉ có khi đang để "Tất cả tài liệu" và hệ thống có từ 2 loại trở lên |
+| `list_documents()` | Cần biết hệ thống đang có tài liệu nào |
+| `read_more(ref, direction)` | Một đoạn bị cắt ngang, cần đọc đoạn liền sau/trước (`ref` dạng `TL1#12` lấy từ kết quả tìm) |
+
+Agent **chỉ thu thập tài liệu**; câu trả lời vẫn do bước soạn của chế độ thường viết, nên trích dẫn `[n]`, kiểm chứng
+trích dẫn, chỉ báo tin cậy và fallback khi hết quota giữ nguyên. Kết quả nhiều lần tìm được gộp xen kẽ theo thứ hạng
+(hạng 1 của mỗi lần, rồi hạng 2...), bỏ trùng, cắt còn Top-K — để vế nào của câu hỏi cũng có chỗ.
+
+Agent dừng khi: tự thấy đủ; một lượt mà mọi lần tìm đều không ra đoạn mới; hết `AGENT_MAX_STEPS` lượt; hoặc lỗi.
+Lỗi/quá hạn ở **lượt đầu** (model không gọi được công cụ — vd một số model `:free` trên OpenRouter —, hết quota, key
+sai...) thì tự quay về chế độ thường, dưới câu trả lời có dòng ⚠️ nói rõ lý do. Lỗi ở lượt sau thì dùng luôn những gì
+đã tìm được. Agent dừng mà chưa tìm lần nào thì backend tự tìm bằng câu hỏi gốc.
+
+Đo thử một câu hai ý ("Mức phụ cấp công tác phí là bao nhiêu, và nhân viên được cấp mấy bộ đồng phục?", Gemini
+`gemini-3.6-flash`) — **một mẫu, chưa phải phép đo chất lượng**:
+
+| | Chế độ thường | Chế độ Agent |
+|---|---|---|
+| Lần tìm | 1 (cả câu) | 3 (tách hai ý, rồi dừng vì không ra đoạn mới) |
+| Điểm rerank đoạn khớp nhất | 0.05 → độ tin cậy **thấp** | 0.87 → độ tin cậy **cao** |
+| Tổng thời gian / chữ đầu tiên | 11.4s / 8.8s | 19.7s / 17.0s |
+| Token (vào + ra) | ~6.7k | ~9.0k (gồm cả các lượt agent) |
+
+Mỗi lượt hỏi ghi `agent_mode` và `agent_steps_json` vào `query_logs`; trang **Giám sát** có bảng so sánh hai chế độ
+(tỉ lệ bó tay, thời gian, token, 👍/👎) — căn cứ để quyết định có nên bật làm mặc định. Câu hỏi nối tiếp hỏi ở chế độ
+Agent không vào danh sách "Hay được hỏi", vì chế độ này không sinh bản viết lại đứng độc lập.
+
+Đã chạy thật với Gemini và OpenRouter (nhánh tương thích OpenAI); nhánh Anthropic mới kiểm tra định dạng request qua
+HTTP giả lập (chưa có key để gọi thật).
+
 ## Kiểm thử nhanh bằng API (không cần UI)
 
 ```bash
@@ -152,6 +192,7 @@ curl -N -X POST http://localhost:8000/api/v1/chat/completions \
     "message": "Nội dung tài liệu nói gì?",
     "provider": "anthropic",
     "model": "claude-sonnet-5",
+    "use_agent": false,
     "history": [
       {"role": "user", "content": "Câu hỏi trước đó"},
       {"role": "assistant", "content": "Câu trả lời trước đó"}
@@ -209,5 +250,6 @@ Theo thứ tự ưu tiên thực tế, không theo thứ tự trong tài liệu 
    viết hàm stream mới (xem cách đã làm với xAI Grok, Groq, OpenRouter). Riêng DeepSeek/Mistral/Qwen... thì dùng
    luôn OpenRouter là xong, không cần thêm provider.
 
-> Đã làm xong so với bản lộ trình cũ: **hybrid search** (BM25 bằng SQLite FTS5 trộn với vector bằng RRF) và
-> **OpenRouter** (một key dùng được model của nhiều hãng).
+> Đã làm xong so với bản lộ trình cũ: **hybrid search** (BM25 bằng SQLite FTS5 trộn với vector bằng RRF),
+> **OpenRouter** (một key dùng được model của nhiều hãng) và **Chế độ Agent** (bản thử nghiệm, tắt mặc định — mục 2
+> ở trên càng cần thiết để biết nó có thực sự tốt hơn trên diện rộng hay không).

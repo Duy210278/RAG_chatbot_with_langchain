@@ -65,7 +65,40 @@ def stats(days: int = 7, db: Session = Depends(get_db)):
         estimated_token_share=round(
             sum(1 for r in rows if r.tokens_estimated) / len(rows), 2
         ) if rows else 0.0,
+        by_mode=_by_mode(rows),
     )
+
+
+def _mode_stats(rows: list) -> dict:
+    """Số liệu để so sánh hai chế độ. Lượt lỗi provider (hết quota, sai model...) đứng riêng ở 'errors':
+    chúng không nói gì về chất lượng của chế độ, gộp vào thì tỉ lệ bó tay bị đội lên vô cớ."""
+    ok = [r for r in rows if not r.error]
+    durations = [r.total_ms for r in ok if r.total_ms]
+    tokens = [(r.prompt_tokens or 0) + (r.completion_tokens or 0) for r in ok if r.prompt_tokens is not None]
+    return {
+        "queries": len(rows),
+        "errors": len(rows) - len(ok),
+        "no_answer_rate": round(sum(1 for r in ok if r.no_answer) / len(ok), 3) if ok else 0.0,
+        "avg_total_ms": int(sum(durations) / len(durations)) if durations else 0,
+        "p95_total_ms": _percentile(durations, 0.95),
+        "avg_tokens": int(sum(tokens) / len(tokens)) if tokens else 0,
+        "positive_feedback": sum(1 for r in ok if r.feedback == 1),
+        "negative_feedback": sum(1 for r in ok if r.feedback == -1),
+    }
+
+
+def _by_mode(rows: list) -> dict:
+    """Rỗng khi chưa ai bật Agent. Lượt bật Agent nhưng phải quay về luồng thường được tính vào 'thuong'
+    (đúng là luồng đã chạy) và đếm riêng ở agent.fallbacks."""
+    if not any(r.agent_steps_json for r in rows):
+        return {}
+    return {
+        "thuong": _mode_stats([r for r in rows if not r.agent_mode]),
+        "agent": {
+            **_mode_stats([r for r in rows if r.agent_mode]),
+            "fallbacks": sum(1 for r in rows if r.agent_steps_json and not r.agent_mode),
+        },
+    }
 
 
 @router.get("/queries", response_model=list[schemas.QueryLogOut])
@@ -130,4 +163,6 @@ def _to_out(row: models.QueryLog) -> schemas.QueryLogOut:
         tokens_estimated=row.tokens_estimated,
         feedback=row.feedback,
         feedback_note=row.feedback_note,
+        agent_mode=row.agent_mode,
+        agent=json.loads(row.agent_steps_json) if row.agent_steps_json else None,
     )

@@ -73,6 +73,13 @@ def _from_lexical(db: Session, ranked: list[tuple[str, float]]) -> list[Hit]:
     return hits
 
 
+def hits_for_chunks(db: Session, chunk_ids: list[str], source: str) -> list[Hit]:
+    """Dựng Hit cho các chunk đã biết trước id (agent chủ động đọc thêm), cùng cấu trúc payload với
+    hai nhánh tìm kiếm. Điểm để 0 - bên gọi tự chấm nếu cần."""
+    hits = _from_lexical(db, [(chunk_id, 0.0) for chunk_id in chunk_ids])
+    return [h.model_copy(update={"sources": [source]}) for h in hits]
+
+
 def rrf_fuse(dense: list[Hit], lexical: list[Hit], k: int, limit: int) -> list[Hit]:
     """score = Σ 1/(k + thứ_hạng) trên từng nhánh. Chunk xuất hiện ở CẢ HAI nhánh được cộng dồn
     nên tự động nổi lên đầu - đó chính là tín hiệu "vừa khớp ngữ nghĩa, vừa khớp từ khoá"."""

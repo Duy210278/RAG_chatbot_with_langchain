@@ -19,6 +19,7 @@ class StageTimer:
 
     Đo riêng từng khâu (viết lại / embed+tìm kiếm / rerank / chờ token đầu tiên / sinh câu trả lời)
     thay vì chỉ đo tổng, vì mỗi khâu có cách khắc phục hoàn toàn khác nhau khi chậm.
+    Một khâu chạy nhiều lần trong cùng lượt (chế độ Agent tìm kiếm nhiều lần) thì cộng dồn.
     """
 
     def __init__(self) -> None:
@@ -31,7 +32,7 @@ class StageTimer:
         try:
             yield
         finally:
-            self.stages[name] = int((time.perf_counter() - started) * 1000)
+            self.stages[name] = self.stages.get(name, 0) + int((time.perf_counter() - started) * 1000)
 
     def elapsed_ms(self) -> int:
         """Thời gian tính từ lúc bắt đầu lượt hỏi - dùng cho mốc 'token đầu tiên'.
@@ -78,6 +79,12 @@ def resolve_usage(usage: dict | None, prompt_text: str, answer_text: str) -> dic
 def _summary(fields: dict, latency: dict) -> str:
     """Một dòng cho người đọc terminal (định dạng pretty) - bản JSON vẫn giữ đủ từng trường riêng."""
     parts = [f"{fields.get('provider')}/{fields.get('model') or 'mặc định'}"]
+    if fields.get("agent_mode"):
+        try:
+            searches = json.loads(fields.get("agent_steps_json") or "{}").get("searches", 0)
+        except ValueError:
+            searches = "?"
+        parts[0] += f" · agent {searches} lần tìm"
     # Bỏ các khâu gần như tức thì (<50ms) - chỉ làm dài dòng mà không nói lên điều gì.
     stages = ", ".join(f"{name} {ms / 1000:.1f}s" for name, ms in latency.items() if ms >= 50)
     parts.append(f"{(fields.get('total_ms') or 0) / 1000:.1f}s" + (f" ({stages})" if stages else ""))
@@ -129,6 +136,7 @@ def record_query(**fields) -> str | None:
             "session_id": fields.get("session_id"),
             "provider": fields.get("provider"),
             "model": fields.get("model"),
+            "agent_mode": fields.get("agent_mode"),
             "n_hits": fields.get("n_hits"),
             "top_score": fields.get("top_score"),
             "confidence": fields.get("confidence"),

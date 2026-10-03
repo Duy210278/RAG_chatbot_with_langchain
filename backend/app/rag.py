@@ -5,6 +5,7 @@ from collections.abc import AsyncIterator
 from sqlalchemy.orm import Session
 
 from . import answer_check
+from .agent import AgentRun
 from .config import PROVIDER_LABELS, get_settings
 from .llm import flatten_prompt, generate_answer_stream, is_quota_error
 from .observability import StageTimer, persist_turn, record_query, resolve_usage
@@ -71,6 +72,7 @@ async def answer_question_stream(
     history: list[dict] | None = None,
     use_rerank: bool = True,
     session_id: str | None = None,
+    use_agent: bool = False,
 ) -> AsyncIterator[str]:
     """Viết lại truy vấn -> Truy hồi lai -> Rerank -> Sinh câu trả lời -> Kiểm tra trích dẫn.
 
@@ -78,6 +80,9 @@ async def answer_question_stream(
     Câu hỏi đi tới bước TÌM KIẾM là bản đã viết lại (độc lập, đủ ngữ cảnh), còn câu hỏi đưa cho
     LLM SINH câu trả lời vẫn là câu gốc - vì LLM đã có sẵn lịch sử hội thoại và nên trả lời đúng
     câu người dùng thực sự hỏi.
+
+    use_agent: ba bước đầu được thay bằng agent tự tìm nhiều lần (agent.py); từ bước sinh câu trả lời
+    trở đi dùng chung. Agent không chạy được thì quay về luồng thường, lý do ghi ở quality["agent"].
 
     Mọi lượt hỏi đều được đo thời gian từng khâu và ghi vào query_logs, kể cả lượt hỏng.
     LLM hết quota thì phát sự kiện 'fallback' chứa các đoạn tài liệu gốc thay cho sự kiện 'error'.
@@ -97,25 +102,62 @@ async def answer_question_stream(
     }
 
     search_query, rewritten = question, False
-    if history and settings.query_rewrite_enabled:
-        yield _sse("status", {"stage": "rewriting", "message": "🧭 Đang đọc lại ngữ cảnh hội thoại..."})
-        with timer.stage("rewrite"):
-            search_query, rewritten = await rewrite_for_retrieval(provider, api_key, model, question, history)
+    hits: list = []
+    hybrid_used = False
+    score_types: dict[str, str] = {}  # thang điểm riêng của từng đoạn - chỉ chế độ Agent mới có thể khác nhau
+    agent: AgentRun | None = None
+    agent_info: dict | None = None  # có giá trị = người dùng đã bật Agent, kể cả khi phải quay về luồng thường
 
-    yield _sse("status", {"stage": "retrieving", "message": "🔍 Đang tìm kiếm tài liệu liên quan..."})
+    if use_agent and not settings.agent_mode_enabled:
+        agent_info = {"fallback": "Chế độ Agent đang bị tắt trên máy chủ (AGENT_MODE_ENABLED=false) - đã dùng chế độ thường."}
+    elif use_agent:
+        agent = AgentRun(
+            db,
+            timer,
+            provider=provider,
+            api_key=api_key,
+            model=model,
+            question=question,
+            history=history,
+            category=category,
+            top_k=top_k,
+            use_rerank=use_rerank,
+        )
+        async for status in agent.run():
+            yield _sse("status", status)
+        if agent.fallback_reason:
+            agent_info = {"fallback": f"Agent không chạy được ({agent.fallback_reason}) - đã dùng chế độ thường."}
+            yield _sse("status", {"stage": "agent_step", "message": "⚠️ Agent không chạy được - chuyển sang chế độ thường"})
+            agent = None
+        else:
+            hits, hybrid_used, score_types = agent.merged_hits(), agent.hybrid_used, agent.score_types
+            agent_info = agent.summary()
 
-    # Bật rerank thì lấy rộng rồi để cross-encoder chọn lại; top_k lúc đó là số đoạn TỐI ĐA gửi cho LLM.
-    limit = max(settings.rerank_candidates, top_k) if use_rerank else top_k
-    with timer.stage("retrieve"):
-        hits, hybrid_used = await retrieve(db, search_query, limit=limit, category=category)
+    base_log["agent_mode"] = agent is not None
+    if agent_info is not None:
+        base_log["agent_steps_json"] = json.dumps(agent_info, ensure_ascii=False)
+    agent_quality = {"agent": agent_info} if agent_info else {}
 
-    if use_rerank and hits:
-        yield _sse("status", {"stage": "reranking", "message": "⚖️ Đang chấm lại mức độ liên quan..."})
-        with timer.stage("rerank"):
-            # chạy ở thread riêng để model (CPU nặng) không chặn event loop / các request khác
-            hits = await asyncio.to_thread(rerank_hits, search_query, hits, top_k)
-    else:
-        hits = hits[:top_k]
+    if agent is None:
+        if history and settings.query_rewrite_enabled:
+            yield _sse("status", {"stage": "rewriting", "message": "🧭 Đang đọc lại ngữ cảnh hội thoại..."})
+            with timer.stage("rewrite"):
+                search_query, rewritten = await rewrite_for_retrieval(provider, api_key, model, question, history)
+
+        yield _sse("status", {"stage": "retrieving", "message": "🔍 Đang tìm kiếm tài liệu liên quan..."})
+
+        # Bật rerank thì lấy rộng rồi để cross-encoder chọn lại; top_k lúc đó là số đoạn TỐI ĐA gửi cho LLM.
+        limit = max(settings.rerank_candidates, top_k) if use_rerank else top_k
+        with timer.stage("retrieve"):
+            hits, hybrid_used = await retrieve(db, search_query, limit=limit, category=category)
+
+        if use_rerank and hits:
+            yield _sse("status", {"stage": "reranking", "message": "⚖️ Đang chấm lại mức độ liên quan..."})
+            with timer.stage("rerank"):
+                # chạy ở thread riêng để model (CPU nặng) không chặn event loop / các request khác
+                hits = await asyncio.to_thread(rerank_hits, search_query, hits, top_k)
+        else:
+            hits = hits[:top_k]
 
     if not hits:
         quality = {
@@ -125,6 +167,7 @@ async def answer_question_stream(
             "rewritten_query": search_query if rewritten else None,
             "hybrid": hybrid_used,
             "latency_ms": timer.stages,
+            **agent_quality,
         }
         log_id = record_query(
             **base_log,
@@ -162,7 +205,7 @@ async def answer_question_stream(
             "page_number": hit.payload.get("page_number"),
             "neighbor_pages": hit.payload.get("neighbor_pages", []),
             "score": round(hit.score, 4),
-            "score_type": score_type,
+            "score_type": score_types.get(hit.id, score_type),
             "sources": hit.sources,
             "used": False,
             "snippet": hit.payload["content"][:300],
@@ -170,13 +213,12 @@ async def answer_question_stream(
         for i, hit in enumerate(hits)
     ]
 
-    yield _sse(
-        "status",
-        {
-            "stage": "generating",
-            "message": f"📄 Đã tìm thấy {len(hits)} đoạn liên quan - đang soạn câu trả lời...",
-        },
+    found = (
+        f"📄 Agent đã thu thập {len(hits)} đoạn từ {agent_info['searches']} lần tìm"
+        if agent
+        else f"📄 Đã tìm thấy {len(hits)} đoạn liên quan"
     )
+    yield _sse("status", {"stage": "generating", "message": f"{found} - đang soạn câu trả lời..."})
 
     answer_parts: list[str] = []
     usage_sink: dict = {}
@@ -230,6 +272,7 @@ async def answer_question_stream(
             "hybrid": hybrid_used,
             "latency_ms": timer.stages,
             "total_ms": timer.total_ms,
+            **agent_quality,
             **_exposed_prompt(prompt_sink),  # prompt đã gửi (dù LLM từ chối vì hết quota)
         }
         persist_turn(session_id, question, answer, citations, quality, log_id)
@@ -247,6 +290,10 @@ async def answer_question_stream(
         citation["used"] = citation["index"] in used
     confidence = answer_check.estimate_confidence(hits, used, invalid, use_rerank, settings.rerank_threshold)
     usage = resolve_usage(usage_sink, flatten_prompt(prompt_sink[0] if prompt_sink else None), answer)
+    if agent:
+        # Token của lượt hỏi gồm cả các lượt agent quyết định tìm gì, không chỉ lượt soạn câu trả lời.
+        usage["prompt_tokens"] = (usage["prompt_tokens"] or 0) + agent.prompt_tokens
+        usage["completion_tokens"] = (usage["completion_tokens"] or 0) + agent.completion_tokens
 
     quality = {
         "confidence": confidence["level"],
@@ -258,6 +305,7 @@ async def answer_question_stream(
         "first_token_ms": first_token_ms,
         "total_ms": timer.total_ms,
         "tokens": usage,
+        **agent_quality,
         **_exposed_prompt(prompt_sink),
     }
 

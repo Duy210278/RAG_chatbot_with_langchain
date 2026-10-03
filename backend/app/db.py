@@ -27,7 +27,19 @@ def init_db() -> None:
 
     Base.metadata.create_all(bind=engine)
     _migrate_add_content_hash()
+    _migrate_add_agent_columns()
     _init_lexical_index()
+
+
+def _migrate_add_agent_columns() -> None:
+    """Cột của chế độ Agent trong query_logs - như _migrate_add_content_hash, create_all không tự thêm
+    cột vào bảng đã có. Các lượt cũ đều chạy chế độ thường nên mặc định 0 / NULL là đúng."""
+    with engine.begin() as conn:
+        columns = {c["name"] for c in inspect(conn).get_columns("query_logs")}
+        if "agent_mode" not in columns:
+            conn.execute(text("ALTER TABLE query_logs ADD COLUMN agent_mode BOOLEAN NOT NULL DEFAULT 0"))
+        if "agent_steps_json" not in columns:
+            conn.execute(text("ALTER TABLE query_logs ADD COLUMN agent_steps_json TEXT"))
 
 
 def _init_lexical_index() -> None:

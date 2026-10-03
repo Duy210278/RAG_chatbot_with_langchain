@@ -8,7 +8,7 @@ Sidebar (cấu hình hỏi đáp + lịch sử trò chuyện) thì dùng chung, 
 
 API key KHÔNG nhập trên UI - chỉ khai báo trong file .env của backend (xem README).
 Sidebar chỉ hiển thị Provider/Model đã có key cấu hình sẵn (lấy từ
-GET /api/v1/config/providers), cùng Top-K và bật/tắt Reranker.
+GET /api/v1/config/providers), cùng Top-K, bật/tắt Reranker và Chế độ Agent.
 """
 
 import json
@@ -58,6 +58,7 @@ _SCORE_LABEL = {
     "rerank": "điểm liên quan",
     "hybrid_rrf": "điểm trộn RRF",
     "cosine": "điểm cosine",
+    "read": "agent đọc thêm, không chấm điểm",
 }
 
 _STATUS_LABEL = {
@@ -165,12 +166,13 @@ _CSS = """
 # Gọi backend
 # ---------------------------------------------------------------------------
 @st.cache_data(ttl=30)
-def fetch_providers() -> list[dict]:
-    """Danh sách provider ĐÃ có API key trong .env của backend, kèm model khả dụng.
+def fetch_chat_config() -> dict:
+    """{"providers": provider ĐÃ có API key trong .env của backend kèm model khả dụng,
+    "agent_mode_available": có hiện công tắc Chế độ Agent không}.
     Cache 30s để không gọi backend liên tục mỗi lần Streamlit rerun."""
     resp = requests.get(f"{API_BASE}/api/v1/config/providers", timeout=10)
     resp.raise_for_status()
-    return resp.json()["providers"]
+    return resp.json()
 
 
 @st.cache_data(ttl=30)
@@ -300,10 +302,15 @@ def render_details(quality: dict | None, citations: list[dict]) -> None:
     if quality:
         icon, label = _CONFIDENCE_BADGE.get(quality.get("confidence"), ("⚪", "Không rõ"))
         st.caption(f"{icon} **{label}** — {quality.get('reason', '')}")
+    agent = (quality or {}).get("agent") or {}
+    if agent.get("fallback"):
+        # Người dùng đã bật Agent - phải thấy ngay là lượt này KHÔNG chạy agent, không giấu trong expander.
+        st.caption(f"⚠️ {agent['fallback']}")
 
     tech = _tech_details(quality) if quality else ""
     rewritten = (quality or {}).get("rewritten_query")
-    if not citations and not tech and not rewritten:
+    agent_steps = agent.get("steps") or []
+    if not citations and not tech and not rewritten and not agent_steps:
         return
 
     used = sum(1 for c in citations if c.get("used"))
@@ -322,11 +329,17 @@ def render_details(quality: dict | None, citations: list[dict]) -> None:
                 f"{mark} **[{c.get('index', '?')}] {c['title']}** — trang {page}{extra} ({score_label}: {c['score']})"
             )
             st.caption(c["snippet"])
-        if rewritten or tech:
+        if rewritten or tech or agent_steps:
             if citations:
                 st.divider()
             if rewritten:
                 st.caption(f"🧭 Truy vấn thực tế dùng để tìm kiếm: _{rewritten}_")
+            if agent_steps:
+                head = f"🤖 **Agent:** {agent.get('searches', 0)} lần tìm · {agent.get('rounds', 0)} lượt"
+                if agent.get("stop_label"):
+                    head += f" · {agent['stop_label']}"
+                lines = [head] + [f"{i}. {s.get('label', s.get('tool', ''))}" for i, s in enumerate(agent_steps, 1)]
+                st.caption("  \n".join(lines))
             if tech:
                 st.caption(f"⏱️ {tech}")
 
@@ -417,6 +430,7 @@ def stream_answer(question: str, cfg: dict) -> None:
                     "model": cfg["model"],
                     "top_k": cfg["top_k"],
                     "use_rerank": cfg["use_rerank"],
+                    "use_agent": cfg["use_agent"],
                     "category": cfg["category"],
                     "history": history_payload,
                     "session_id": st.session_state.session_id,
@@ -437,6 +451,8 @@ def stream_answer(question: str, cfg: dict) -> None:
                 data = json.loads(line.split(":", 1)[1].strip())
                 if event_name == "status":
                     status_box.update(label=data["message"], state="running")
+                    if data.get("stage") == "agent_step":  # bước agent đã xong: ghi lại để mở khung ra xem được cả chuỗi
+                        status_box.write(data["message"])
                 elif event_name == "token":
                     if first_token:
                         status_box.update(label="Đã có câu trả lời", state="complete")
@@ -566,13 +582,14 @@ def render_sidebar(chat_page_ref) -> dict:
             type="tertiary",
             help="Tải lại danh sách Provider/Model từ backend (sau khi sửa .env + restart backend)",
         ):
-            fetch_providers.clear()
+            fetch_chat_config.clear()
 
         try:
-            providers = fetch_providers()
+            chat_config = fetch_chat_config()
         except requests.exceptions.RequestException as exc:
-            providers = []
+            chat_config = {}
             st.error(f"Không kết nối được backend ({API_BASE}): {exc}", icon=":material/cloud_off:")
+        providers = chat_config.get("providers", [])
 
         provider, model, provider_label = None, None, ""
         if not providers:
@@ -590,8 +607,19 @@ def render_sidebar(chat_page_ref) -> dict:
 
         category = st.selectbox("Phạm vi tài liệu", list(CATEGORY_LABELS), format_func=CATEGORY_LABELS.get)
 
-        # Rerank/Top-K ít khi cần đổi - gom lại để phần cấu hình chính gọn, không đẩy lịch sử trò chuyện xuống.
+        # Agent/Rerank/Top-K ít khi cần đổi - gom lại để phần cấu hình chính gọn, không đẩy lịch sử trò chuyện xuống.
         with st.expander("Tuỳ chọn truy hồi nâng cao"):
+            use_agent = False
+            if chat_config.get("agent_mode_available"):  # AGENT_MODE_ENABLED=false thì ẩn hẳn
+                use_agent = st.toggle(
+                    "Chế độ Agent (thử nghiệm)",
+                    value=False,
+                    help=(
+                        "Agent tự quyết tìm gì, tìm mấy lần: tách câu hỏi nhiều ý, đổi từ khoá khi tìm trượt. "
+                        "Trả lời tốt hơn với câu hỏi phức tạp nhưng chậm hơn và tốn token hơn. "
+                        "Model không gọi được công cụ thì tự quay về chế độ thường."
+                    ),
+                )
             use_rerank = st.toggle(
                 "Bật Reranker",
                 value=True,
@@ -624,6 +652,7 @@ def render_sidebar(chat_page_ref) -> dict:
         "provider_label": provider_label,
         "model": model,
         "category": category,
+        "use_agent": use_agent,
         "use_rerank": use_rerank,
         "top_k": top_k,
     }
@@ -652,7 +681,8 @@ def chat_page() -> None:
             # Luôn cho thấy câu trả lời SẮP TỚI dùng model nào - lịch sử có thể chứa lượt của model khác.
             st.caption(
                 f"{cfg['provider_label']} · **{cfg['model']}** · Phạm vi: {CATEGORY_LABELS[cfg['category']]} · "
-                f"Reranker {'bật' if cfg['use_rerank'] else 'tắt'} · Top-K {cfg['top_k']}"
+                + ("🤖 **Agent bật** · " if cfg["use_agent"] else "")
+                + f"Reranker {'bật' if cfg['use_rerank'] else 'tắt'} · Top-K {cfg['top_k']}"
             )
 
         if not st.session_state.messages and not question:
@@ -844,6 +874,37 @@ def monitor_page() -> None:
             else:
                 st.caption("Chưa có dữ liệu.")
 
+        by_mode = data.get("by_mode") or {}
+        if by_mode:
+            st.subheader("🤖 Chế độ thường và Chế độ Agent", anchor=False)
+            st.caption(
+                "Căn cứ để quyết định có nên bật Agent làm mặc định. Lượt lỗi provider được đếm riêng, không tính "
+                "vào các cột còn lại. Lượt bật Agent nhưng phải quay về chế độ thường được tính vào chế độ thường."
+            )
+            st.dataframe(
+                [
+                    {
+                        "Chế độ": name,
+                        "Lượt hỏi": m["queries"],
+                        "Không trả lời được": f"{m['no_answer_rate'] * 100:.0f}%",
+                        "Thời gian TB (s)": round(m["avg_total_ms"] / 1000, 1),
+                        "P95 (s)": round(m["p95_total_ms"] / 1000, 1),
+                        "Token TB / lượt": m["avg_tokens"],
+                        "👍": m["positive_feedback"],
+                        "👎": m["negative_feedback"],
+                        "Lỗi provider": m["errors"],
+                    }
+                    for name, m in (("Thường", by_mode["thuong"]), ("Agent", by_mode["agent"]))
+                ],
+                hide_index=True,
+                width="stretch",
+            )
+            if by_mode["agent"].get("fallbacks"):
+                st.caption(
+                    f"⚠️ {by_mode['agent']['fallbacks']} lượt bật Agent nhưng agent không chạy được (model không gọi "
+                    "được công cụ, hết quota, quá hạn...) và đã quay về chế độ thường."
+                )
+
         st.subheader("🔢 Token đã dùng", anchor=False)
         t1, t2, t3 = st.columns(3)
         t1.metric("Token đầu vào", f"{data['prompt_tokens']:,}", border=True)
@@ -880,7 +941,13 @@ def monitor_page() -> None:
                     {
                         "Lúc": r["created_at"][:19].replace("T", " "),
                         "Câu hỏi": r["question"][:80],
-                        "Viết lại": (r["rewritten_query"] or "")[:60],
+                        "Chế độ": "🤖 Agent" if r.get("agent_mode") else ("Thường (agent lỗi)" if r.get("agent") else "Thường"),
+                        # Chế độ Agent không viết lại câu hỏi - hiện các truy vấn agent đã tìm thay vào đó.
+                        "Truy vấn": (
+                            " | ".join(s["query"] for s in (r.get("agent") or {}).get("steps", []) if s.get("query"))
+                            or r["rewritten_query"]
+                            or ""
+                        )[:80],
                         "Hits": r["n_hits"],
                         "Điểm cao nhất": round(r["top_score"], 3) if r["top_score"] is not None else None,
                         "Tin cậy": r["confidence"],

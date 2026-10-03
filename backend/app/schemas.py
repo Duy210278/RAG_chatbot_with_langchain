@@ -29,6 +29,7 @@ class ChatRequest(BaseModel):
     model: str | None = None
     top_k: int = 12  # khi bật rerank: số đoạn TỐI ĐA gửi cho LLM (có thể ít hơn nếu ít đoạn đạt ngưỡng)
     use_rerank: bool = True
+    use_agent: bool = False  # chế độ Agent (agent.py) - bị bỏ qua nếu AGENT_MODE_ENABLED=false
     category: str | None = None
     history: list[ChatMessage] = []
     api_key: str | None = None  # chỉ dùng khi gọi thẳng API (curl/test) - UI không còn gửi field này
@@ -80,6 +81,8 @@ class QueryLogOut(BaseModel):
     tokens_estimated: bool
     feedback: int | None = None
     feedback_note: str | None = None
+    agent_mode: bool = False
+    agent: dict | None = None  # các bước agent đã làm, hoặc {"fallback": lý do} nếu phải quay về chế độ thường
 
 
 class UnansweredGroup(BaseModel):
@@ -104,6 +107,8 @@ class AdminStats(BaseModel):
     prompt_tokens: int
     completion_tokens: int
     estimated_token_share: float  # tỉ lệ lượt mà số token là ƯỚC LƯỢNG, không phải số thật từ provider
+    # So sánh chế độ thường với chế độ Agent: {"thuong": {...}, "agent": {...}} - rỗng nếu chưa có lượt Agent nào
+    by_mode: dict = {}
 
 
 class Citation(BaseModel):
@@ -128,6 +133,7 @@ class ProviderInfo(BaseModel):
 
 class ProvidersResponse(BaseModel):
     providers: list[ProviderInfo]
+    agent_mode_available: bool = False  # AGENT_MODE_ENABLED - false thì UI ẩn công tắc Chế độ Agent
 
 
 class FaqItem(BaseModel):
