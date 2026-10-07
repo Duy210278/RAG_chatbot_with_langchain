@@ -11,4 +11,6 @@ def list_providers():
     """Trả về danh sách provider ĐÃ có API key cấu hình trong .env, kèm model khả dụng.
     UI dùng endpoint này để dựng dropdown Provider/Model - không còn cho nhập API key trên UI."""
     settings = get_settings()
-    return schemas.ProvidersResponse(providers=settings.provider_catalog())
+    return schemas.ProvidersResponse(
+        providers=settings.provider_catalog(), agent_mode_available=settings.agent_mode_enabled
+    )

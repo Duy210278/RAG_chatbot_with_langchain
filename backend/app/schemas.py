@@ -29,6 +29,7 @@ class ChatRequest(BaseModel):
     model: str | None = None
     top_k: int = 12  # khi bật rerank: số đoạn TỐI ĐA gửi cho LLM (có thể ít hơn nếu ít đoạn đạt ngưỡng)
     use_rerank: bool = True
+    use_agent: bool = False  # chế độ Agent (agent.py) - bị bỏ qua nếu AGENT_MODE_ENABLED=false
     category: str | None = None
     history: list[ChatMessage] = []
     api_key: str | None = None  # chỉ dùng khi gọi thẳng API (curl/test) - UI không còn gửi field này
@@ -80,6 +81,8 @@ class QueryLogOut(BaseModel):
     tokens_estimated: bool
     feedback: int | None = None
     feedback_note: str | None = None
+    agent_mode: bool = False
+    agent: dict | None = None  # các bước agent đã làm, hoặc {"fallback": lý do} nếu phải quay về chế độ thường
 
 
 class UnansweredGroup(BaseModel):
@@ -89,10 +92,15 @@ class UnansweredGroup(BaseModel):
 
 
 class AdminStats(BaseModel):
+    """total_queries = answered_count + no_answer_count + error_count. Các chỉ số thời gian, khâu và độ tin
+    cậy chỉ tính trên lượt không lỗi provider (latency_sample = số lượt dùng để tính thời gian)."""
+
     days: int
     total_queries: int
-    no_answer_count: int
-    error_count: int
+    answered_count: int = 0  # trả lời có trích dẫn được ít nhất một nguồn
+    no_answer_count: int  # bó tay: không tìm thấy tài liệu, hoặc trả lời mà không trích được nguồn nào
+    error_count: int  # lỗi provider - hết quota, sai key, sai model...
+    latency_sample: int = 0
     invalid_citation_count: int
     positive_feedback: int
     negative_feedback: int
@@ -104,6 +112,8 @@ class AdminStats(BaseModel):
     prompt_tokens: int
     completion_tokens: int
     estimated_token_share: float  # tỉ lệ lượt mà số token là ƯỚC LƯỢNG, không phải số thật từ provider
+    # So sánh chế độ thường với chế độ Agent: {"thuong": {...}, "agent": {...}} - rỗng nếu chưa có lượt Agent nào
+    by_mode: dict = {}
 
 
 class Citation(BaseModel):
@@ -128,6 +138,7 @@ class ProviderInfo(BaseModel):
 
 class ProvidersResponse(BaseModel):
     providers: list[ProviderInfo]
+    agent_mode_available: bool = False  # AGENT_MODE_ENABLED - false thì UI ẩn công tắc Chế độ Agent
 
 
 class FaqItem(BaseModel):

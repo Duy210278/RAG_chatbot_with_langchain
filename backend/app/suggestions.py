@@ -50,6 +50,8 @@ def popular_questions(db: Session, category: str | None, exclude: set[str], limi
     - Bỏ hẳn các lượt lỗi provider (hết quota, sai model...): chúng không nói gì về việc tài liệu
       có trả lời được câu hỏi hay không.
     - Một lần bị chấm 👎 là loại luôn, không đề xuất câu người dùng đã báo là trả lời sai.
+    - Bỏ câu nối tiếp hỏi ở chế độ Agent: chế độ đó không viết lại câu hỏi (agent tự đọc lịch sử),
+      nên không có bản đứng độc lập để hiển thị.
     """
     settings = get_settings()
     since = datetime.now(timezone.utc) - timedelta(days=settings.popular_days)
@@ -64,6 +66,8 @@ def popular_questions(db: Session, category: str | None, exclude: set[str], limi
         log.confidence,
         log.feedback,
         log.created_at,
+        log.agent_mode,
+        log.agent_steps_json,
     ).filter(log.created_at >= since, log.error.is_(None))
     if category and category != "ALL":
         # Câu hỏi ở phạm vi ALL có thể được trả lời từ loại tài liệu khác - không chắc đúng ở phạm vi hẹp.
@@ -71,6 +75,8 @@ def popular_questions(db: Session, category: str | None, exclude: set[str], limi
 
     groups: dict[str, dict] = {}
     for row in q.order_by(log.created_at).all():
+        if row.agent_mode and json.loads(row.agent_steps_json or "{}").get("follow_up"):
+            continue
         text = (row.rewritten_query or row.question).strip()
         key = normalize_question(text)
         if not key or key in exclude:

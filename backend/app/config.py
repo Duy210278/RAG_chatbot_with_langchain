@@ -86,6 +86,12 @@ class Settings(BaseSettings):
     query_rewrite_enabled: bool = True
     query_rewrite_timeout: float = 8.0  # giây - quá hạn thì dùng câu hỏi gốc, không chặn lượt hỏi
 
+    # --- Chế độ Agent: LLM tự quyết tìm gì, tìm mấy lần trước khi soạn câu trả lời (xem agent.py) ---
+    # Người dùng bật/tắt theo từng câu hỏi trên UI (mặc định tắt); false = ẩn hẳn công tắc đó.
+    agent_mode_enabled: bool = True
+    agent_max_steps: int = 4  # số lượt gọi LLM tối đa của agent, chưa tính lượt soạn câu trả lời
+    agent_step_timeout: float = 20.0  # giây cho MỖI lượt - quá hạn ở lượt đầu thì quay về chế độ thường
+
     # --- Khi LLM hết quota: trả thẳng N đoạn tài liệu gốc đã tìm được thay vì chỉ báo lỗi ---
     quota_fallback_results: int = 3
 

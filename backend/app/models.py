@@ -111,6 +111,10 @@ class QueryLog(Base):
     top_k: Mapped[int] = mapped_column(Integer, default=0)
     use_rerank: Mapped[bool] = mapped_column(Boolean, default=True)
     hybrid: Mapped[bool] = mapped_column(Boolean, default=False)
+    # True = tài liệu do agent tìm (agent.py). Người dùng bật Agent nhưng agent không chạy được thì
+    # vẫn là False, còn agent_steps_json ghi lý do - để so sánh hai chế độ cho đúng.
+    agent_mode: Mapped[bool] = mapped_column(Boolean, default=False)
+    agent_steps_json: Mapped[str | None] = mapped_column(Text, nullable=True)  # NULL = người dùng không bật Agent
 
     n_hits: Mapped[int] = mapped_column(Integer, default=0)
     top_score: Mapped[float | None] = mapped_column(Float, nullable=True)
