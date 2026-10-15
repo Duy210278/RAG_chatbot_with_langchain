@@ -16,7 +16,7 @@ PROVIDER_LABELS = {
     "xai": "xAI Grok",
     "gemini": "Google Gemini (free tier)",
     "groq": "Groq (free tier)",
-    "openrouter": "OpenRouter (1 key, nhiều hãng)",
+    "openrouter": "OpenRouter",
 }
 
 
@@ -35,18 +35,26 @@ class Settings(BaseSettings):
 
     # Danh sách model cho từng provider, phân cách bằng dấu phẩy - model đầu tiên là mặc định.
     # UI hiển thị đúng danh sách này dưới dạng dropdown (không cho gõ tay để tránh sai định dạng model ID).
-    anthropic_models: str = "claude-sonnet-5,claude-opus-5,claude-haiku-4-5-20251001,claude-fable-5-1"
+    # Model đầu tiên là mặc định: claude-haiku-5-5 (0.10/0.50 USD/1 triệu token vào-ra, tới 100K token đầu vào; trên mức đó
+    # 0.50/2.50). Gọi trực tiếp Anthropic dùng ID dấu gạch, khác ID dạng dấu chấm của OpenRouter, và không có hậu tố ngày.
+    anthropic_models: str = "claude-haiku-5-5,claude-haiku-4-5,claude-sonnet-5-5,claude-opus-5-5,claude-fable-5-1"
     openai_models: str = "gpt-4o-mini,gpt-4o,gpt-4.1,gpt-4.1-mini,gpt-4.1-nano,o3-mini,o1"
     xai_models: str = "grok-4,grok-4-fast"
     gemini_models: str = "gemini-3.6-flash,gemini-2.5-flash,gemini-2.5-pro,gemini-2.5-flash-lite,gemini-2.0-flash"
     groq_models: str = "llama-3.3-70b-versatile,llama-3.1-8b-instant"
     # OpenRouter là cổng trung gian: một key dùng được model của nhiều hãng, model ID luôn dạng "hãng/model".
-    # Danh sách dưới đây xếp theo giá tăng dần (giá tại thời điểm thêm, USD/1 triệu token vào-ra):
-    # gpt-6-luna 0.10/0.50 · llama-4-maverick 0.19/0.65 · deepseek-v4.1-flash 0.30/1.20
-    # · gemini-3.8-flash 0.75/3.75 · claude-sonnet-5.5 2.00/10.00. Bản ":free" miễn phí nhưng giới hạn lượt gọi.
+    # Model ĐẦU TIÊN là mặc định: claude-haiku-5.5 - rẻ (0.10/0.50 USD/1 triệu token vào-ra) và đủ dùng cho hỏi đáp
+    # trên tài liệu. Tiếp theo là toàn bộ model Claude xếp theo giá tăng dần (giá tra ngày 2026-10-12, OpenRouter hay đổi:
+    # haiku 0.10-1.00 · sonnet 2.00-3.00 · opus 4.00-15.00 · fable 10.00 vào), rồi các hãng khác. Bản ":free" miễn phí
+    # nhưng giới hạn lượt gọi.
     openrouter_models: str = (
-        "openai/gpt-6-luna,meta-llama/llama-4-maverick,deepseek/deepseek-v4.1-flash,"
-        "google/gemini-3.8-flash,anthropic/claude-sonnet-5.5,nvidia/nemotron-3.5-lightning:free"
+        "anthropic/claude-haiku-5.5,anthropic/claude-haiku-4.5,anthropic/claude-sonnet-5,"
+        "anthropic/claude-sonnet-5.5,anthropic/claude-sonnet-4,anthropic/claude-sonnet-4.5,"
+        # "anthropic/claude-sonnet-4.6,anthropic/claude-opus-5.5,anthropic/claude-opus-4.5,"
+        # "anthropic/claude-opus-4.6,anthropic/claude-opus-4.7,anthropic/claude-opus-4.8,"
+        # "anthropic/claude-opus-5,anthropic/claude-fable-5,anthropic/claude-fable-5.1,"
+        # "anthropic/claude-opus-4.1,openai/gpt-6-luna,meta-llama/llama-4-maverick,"
+        # "deepseek/deepseek-v4.1-flash,google/gemini-3.8-flash,nvidia/nemotron-3.5-lightning:free"
     )
 
     # --- Lịch sử hội thoại làm ngữ cảnh multi-turn ---
